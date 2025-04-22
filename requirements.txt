@@ -1,0 +1,8 @@
+adjustText
+arviz
+matplotlib
+numpy
+pandas
+pystan<3
+scipy
+seaborn
