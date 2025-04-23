@@ -24,6 +24,7 @@ Structure:
 """
 
 import os
+import re
 
 import arviz as az
 import matplotlib.cm as cm
@@ -952,7 +953,7 @@ def run_diagnostic_checks(fit, samples, stan_data, df_long,
     summary = None
     if idata is not None:
         try:
-            summary = az.summary(idata, round_to=3, kind='stats', hdi_prob=0.94)  # Use 'stats' kind
+            summary = az.summary(idata, round_to=3, kind='diagnostics', hdi_prob=0.94)  # Use 'stats' kind
             print("ArviZ summary generated.")
         except Exception as e:
             print(f"ERROR generating ArviZ summary: {e}")
@@ -1101,7 +1102,7 @@ def run_diagnostic_checks(fit, samples, stan_data, df_long,
             print(msg)
         except Exception as e:
             msg = f"WARNING: Could not generate PPC histogram: {e}."
-        warnings_found.append(msg)
+            warnings_found.append(msg)
         print(msg)
     else:
         print("  INFO: Required parameters not found for PPC histogram.")
@@ -1119,7 +1120,7 @@ def run_diagnostic_checks(fit, samples, stan_data, df_long,
                     "  WARNING: log_lik appears to be single value per obs, not samples. Cannot calculate LOOIC/WAIC reliably.")
             else:
                 # Attempt LOO calculation directly from array
-                loo_result = az.loo(log_lik_array, pointwise=True)  # Might need r_eff specified if using array
+                loo_result = az.loo(idata, pointwise=True)  # Might need r_eff specified if using array
                 print("\nLOOIC Results:")
                 print(loo_result)
 
@@ -1391,19 +1392,28 @@ else:
 print("\n--- Section 7: Defining Visualization Functions ---")
 
 
-def plot_reorg_slope_chart(theta_df_viz, category_name_viz, id_var_viz, year_col_viz, years_viz,
-                           parent_to_child_map, output_dir_viz):
-    """
-    Creates a slope chart visualizing team evolution across a reorg, using adjustText.
-    """
-    print(f"  Generating reorg slope chart for: {category_name_viz}")
+def filename_escape(text):
+    return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
+
+
+# --- Slope Chart (Internal Standardization) ---
+def plot_reorg_slope_chart_standardized_internal(theta_df_viz, category_name_viz, id_var_viz, year_col_viz, years_viz,
+                                                 mu_map_viz, sigma_map_viz, parent_to_child_map, output_dir_viz):
+    """Creates slope chart using theta scores standardized INTERNALLY."""
+    print(f"  Generating STANDARDIZED (internal) reorg slope chart for: {category_name_viz}")
     if theta_df_viz is None or theta_df_viz.empty:
         print(f"INFO: theta_df is empty, skipping reorg slope chart for {category_name_viz}.")
         return None
 
-    col_name = f"theta_{category_name_viz}"
-    if col_name not in theta_df_viz.columns:
-        print(f"INFO: Column {col_name} not found, skipping reorg slope chart for {category_name_viz}.")
+    pop_mean = mu_map_viz.get(category_name_viz)
+    pop_sd = sigma_map_viz.get(category_name_viz)
+
+    if pop_mean is None or pop_sd is None:
+        print(f"INFO: Missing mu/sigma for {category_name_viz}. Skipping chart.")
+        return None
+
+    if pop_sd <= 1e-6:
+        print(f"INFO: Sigma near zero for {category_name_viz}. Skipping chart.")
         return None
 
     raw_col_name = f"theta_{category_name_viz}"
@@ -1431,38 +1441,39 @@ def plot_reorg_slope_chart(theta_df_viz, category_name_viz, id_var_viz, year_col
     plotted_points_y2 = {}
     # Plot Year 1 points & labels
     for team_id, row in df_y1.iterrows():
-        y1_val = row[col_name]
-        if pd.notna(y1_val):
-            ax.plot(year1, y1_val, 'o', color='black', markersize=5)
-            texts.append(ax.text(year1 - 0.05, y1_val, team_id, ha='right', va='center', fontsize=8))
-            plotted_points_y1[team_id] = y1_val
-    # Plot Year 2 points & labels
+        raw_val = row[raw_col_name]
+        if pd.notna(raw_val):
+            y1_val_z = (raw_val - pop_mean) / pop_sd
+            ax.plot(year1, y1_val_z, 'o', color='black', markersize=5)
+            texts.append(ax.text(year1 - 0.05, y1_val_z, team_id, ha='right', va='center', fontsize=8))
+            plotted_points_y1[team_id] = y1_val_z
     all_year2_teams = sorted(df_y2.index.unique().tolist())
-    colors = cm.get_cmap('tab20', max(1, len(all_year2_teams)))  # Use tab20 for distinct colors
-    color_map_y2 = {team: colors(i % 20) for i, team in enumerate(all_year2_teams)}  # Cycle colors if > 20
+    num_colors = max(1, len(all_year2_teams))
+    cmap_func = cm.get_cmap('tab20', num_colors)  # Use tab20 for distinct colors
+    color_map_y2 = {team: cmap_func(i % num_colors) for i, team in enumerate(all_year2_teams)}  # Cycle colors if > 20
     for team_id, row in df_y2.iterrows():
-        y2_val = row[col_name]
-        if pd.notna(y2_val):
+        raw_val = row[raw_col_name]
+        if pd.notna(raw_val):
+            y2_val_z = (raw_val - pop_mean) / pop_sd
             point_color = color_map_y2.get(team_id, 'gray')  # Use mapped color
-            ax.plot(year2, y2_val, 'o', color=point_color, markersize=6)  # Mark Y2 points with color
-            texts.append(ax.text(year2 + 0.05, y2_val, team_id, horizontalalignment='left', verticalalignment='center',
-                                 fontsize=8))
-            plotted_points_y2[team_id] = y2_val
+            ax.plot(year2, y2_val_z, 'o', color=point_color, markersize=6)  # Mark Y2 points with color
+            texts.append(ax.text(year2 + 0.05, y2_val_z, team_id, ha='left', va='center', fontsize=8))
+            plotted_points_y2[team_id] = y2_val_z
 
     # --- Plot Connecting Lines based on Mapping ---
     print(f"  Plotting reorg lines for {category_name_viz}...")
     lines_plotted = 0
     for parent_team, child_teams in parent_to_child_map.items():
         if parent_team in plotted_points_y1:
-            y1_val = plotted_points_y1[parent_team]
+            y1_val_z = plotted_points_y1[parent_team]
             for child_team in child_teams:
                 if child_team in plotted_points_y2:
-                    y2_val = plotted_points_y2[child_team]
+                    y2_val_z = plotted_points_y2[child_team]
                     line_color = color_map_y2.get(child_team, 'gray')  # Color by child team
-                    ax.plot([year1, year2], [y1_val, y2_val], linestyle='-', lw=1.0, color=line_color, alpha=0.6)
+                    ax.plot([year1, year2], [y1_val_z, y2_val_z], linestyle='-', lw=2.5, color=line_color, alpha=0.6)
                     lines_plotted += 1
+    print(f"    {lines_plotted} lineage lines plotted for {category_name_viz}.")
 
-    print(f"    {lines_plotted} lineage lines plotted.")
     # Adjust labels to prevent overlap
     if ADJUST_TEXT_AVAILABLE and texts:
         try:
@@ -1471,10 +1482,11 @@ def plot_reorg_slope_chart(theta_df_viz, category_name_viz, id_var_viz, year_col
             print(f"    Warning: adjust_text failed: {e}")
     elif not ADJUST_TEXT_AVAILABLE:
         print("    Info: Skipping adjust_text (library not installed).")
+
     # Final touches
-    ax.set_title(f'Standardized Team Capability Evolution: {category_name_viz} ({year1} vs {year2})')
-    ax.set_xlabel('Year')
-    ax.set_ylabel(f'Capability Z-Score as Std. Devs from Mean ({category_name_viz})')
+    ax.set_title(f'Standardized Capability Evolution: {category_name_viz} ({year1} vs {year2})', fontsize=14)
+    ax.set_xlabel('Year', fontsize=12)
+    ax.set_ylabel(f'Capability Z-Score (Std. Devs from Mean)', fontsize=12)
     ax.set_xticks([year1, year2])
     ax.grid(True, axis='y', linestyle='--', alpha=0.6)
     ax.axhline(0, color='gray', linestyle='-', linewidth=1.0, alpha=0.8, zorder=0)  # center line
@@ -1483,121 +1495,17 @@ def plot_reorg_slope_chart(theta_df_viz, category_name_viz, id_var_viz, year_col
     # Create a simple legend (might get crowded if too many Y2 teams)
     if len(all_year2_teams) <= 20 and all_year2_teams:  # Only show legend if manageable
         handles = [plt.Line2D([0], [0], marker='o', color='w', label=team,
-                              markerfacecolor=color_map_y2.get(team, 'gray'), markersize=6) for
-                   team in all_year2_teams if team in plotted_points_y2]
+                              markerfacecolor=color_map_y2.get(team, 'gray'), markersize=6)
+                   for team in all_year2_teams if team in plotted_points_y2]
         if handles:
             ax.legend(handles=handles, title=f"{year2} Teams", bbox_to_anchor=(1.05, 1), loc='upper left',
                       fontsize='small')
             plt.subplots_adjust(right=0.85)
-    filepath = os.path.join(output_dir_viz, f'reorg_slope_chart_{category_name_viz.replace(" ", "-")}.png')
+    filepath = os.path.join(output_dir_viz,
+                            f'standardized_internal_reorg_slope_chart_{filename_escape(category_name_viz)}.png')
     plt.savefig(filepath, bbox_inches='tight')
     plt.show(block=False)
     plt.pause(1)
-    plt.close()
-    print(f"Reorg slope chart saved for {category_name_viz} to {filepath}")
-    return fig
-
-
-# --- Slope Chart (Internal Standardization) ---
-def plot_reorg_slope_chart_standardized_internal(theta_df_viz, category_name_viz, id_var_viz, year_col_viz, years_viz,
-                                                 mu_map_viz, sigma_map_viz, parent_to_child_map, output_dir_viz):
-    """Creates slope chart using theta scores standardized INTERNALLY."""
-    print(f"  Generating STANDARDIZED (internal) reorg slope chart for: {category_name_viz}")
-    pop_mean = mu_map_viz.get(category_name_viz)
-    pop_sd = sigma_map_viz.get(category_name_viz)
-    if pop_mean is None or pop_sd is None:
-        print(f"INFO: Missing mu/sigma for {category_name_viz}. Skipping chart.")
-        return None
-    if pop_sd <= 1e-6:
-        print(f"INFO: Sigma near zero for {category_name_viz}. Skipping chart.")
-        return None
-    raw_col_name = f"theta_{category_name_viz}"
-    if theta_df_viz is None or raw_col_name not in theta_df_viz.columns:
-        print(f"INFO: theta_df or raw column {raw_col_name} missing. Skipping chart.")
-        return None
-    if len(years_viz) != 2:
-        print("INFO: Reorg slope chart requires 2 years. Skipping.")
-        return None
-    year1, year2 = min(years_viz), max(years_viz)
-    df_y1 = theta_df_viz[theta_df_viz[year_col_viz] == year1].set_index(id_var_viz)
-    df_y2 = theta_df_viz[theta_df_viz[year_col_viz] == year2].set_index(id_var_viz)
-    if df_y1.empty and df_y2.empty:
-        print(f"INFO: No data for {year1} or {year2}. Skipping chart.")
-        return None
-
-    fig, ax = plt.subplots(figsize=(12, max(8, (len(df_y1) + len(df_y2)) * 0.4)))
-    texts = []
-    plotted_points_y1 = {}
-    plotted_points_y2 = {}
-
-    for team_id, row in df_y1.iterrows():
-        raw_val = row[raw_col_name]
-        if pd.notna(raw_val):
-            y1_val_z = (raw_val - pop_mean) / pop_sd
-            ax.plot(year1, y1_val_z, 'o', color='black',
-                    markersize=5)
-            texts.append(
-                ax.text(year1 - 0.05, y1_val_z, team_id, ha='right', va='center', fontsize=8))
-            plotted_points_y1[
-                team_id] = y1_val_z
-    all_year2_teams = sorted(df_y2.index.unique().tolist())
-    num_colors = max(1, len(all_year2_teams))
-    cmap_func = cm.get_cmap('tab20', num_colors)
-    color_map_y2 = {team: cmap_func(i % num_colors) for i, team in enumerate(all_year2_teams)}
-    for team_id, row in df_y2.iterrows():
-        raw_val = row[raw_col_name]
-        if pd.notna(raw_val):
-            y2_val_z = (raw_val - pop_mean) / pop_sd
-            point_color = color_map_y2.get(team_id, 'gray')
-            ax.plot(year2,
-                    y2_val_z,
-                    'o',
-                    color=point_color,
-                    markersize=6)
-            texts.append(
-                ax.text(year2 + 0.05, y2_val_z, team_id, ha='left', va='center', fontsize=8))
-            plotted_points_y2[
-                team_id] = y2_val_z
-
-    lines_plotted = 0
-    for parent_team, child_teams in parent_to_child_map.items():
-        if parent_team in plotted_points_y1:
-            y1_val_z = plotted_points_y1[parent_team]
-            for child_team in child_teams:
-                if child_team in plotted_points_y2:
-                    y2_val_z = plotted_points_y2[child_team]
-                    line_color = color_map_y2.get(child_team,
-                                                  'gray')
-                    ax.plot(
-                        [year1, year2], [y1_val_z, y2_val_z], linestyle='-', lw=1.0, color=line_color,
-                        alpha=0.6)
-                    lines_plotted += 1
-    print(f"    {lines_plotted} lineage lines plotted for {category_name_viz}.")
-    if ADJUST_TEXT_AVAILABLE and texts:
-        try:
-            adjust_text(texts, ax=ax, force_points=(0.2, 0.3), arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
-        except Exception as e:
-            print(f"    Warning: adjust_text failed: {e}")
-    elif not ADJUST_TEXT_AVAILABLE:
-        print("    Info: Skipping adjust_text.")
-
-    ax.set_title(f'Standardized Capability Evolution: {category_name_viz} ({year1} vs {year2})', fontsize=14)
-    ax.set_xlabel('Year', fontsize=12)
-    ax.set_ylabel(f'Capability Z-Score (Std. Devs from Mean)', fontsize=12)
-    ax.set_xticks([year1, year2])
-    ax.grid(True, axis='y', linestyle='--', alpha=0.6)
-    ax.axhline(0, color='gray', linestyle='-', linewidth=1.0, alpha=0.8, zorder=0)
-    ax.set_xlim(year1 - 0.4, year2 + 0.4)
-    if len(all_year2_teams) <= 20 and all_year2_teams:
-        handles = [
-            plt.Line2D([0], [0], marker='o', color='w', label=team, markerfacecolor=color_map_y2.get(team, 'gray'),
-                       markersize=6) for team in all_year2_teams if team in plotted_points_y2]
-        if handles:
-            ax.legend(handles=handles, title=f"{year2} Teams", bbox_to_anchor=(1.05, 1), loc='upper left',
-                      fontsize='small')
-            plt.subplots_adjust(right=0.85)
-    filepath = os.path.join(output_dir_viz, f'standardized_internal_reorg_slope_chart_{category_name_viz}.png')
-    plt.savefig(filepath, bbox_inches='tight')
     plt.close(fig)
     print(f"Standardized slope chart saved for {category_name_viz} to {filepath}")
     return fig
@@ -1741,7 +1649,7 @@ def plot_predicted_vs_empirical_dist(question_id, samples_dict, stan_data_dict, 
     x_ticks = np.array(response_options_val)
     try:
         sns.kdeplot(empirical_responses, ax=ax, color='black', linestyle='--', linewidth=2, label='Empirical KDE',
-                    bw_adjust=0.75)
+                    bw_adjust=1.5)
         sns.rugplot(empirical_responses, ax=ax, color='black', alpha=0.5, height=0.03)
     except Exception as e:
         print(f"  Warning: KDE plot failed: {e}. Using histogram.")
@@ -1764,7 +1672,7 @@ def plot_predicted_vs_empirical_dist(question_id, samples_dict, stan_data_dict, 
     ax.legend()
     ax.grid(axis='y', linestyle=':', alpha=0.6)
     plt.tight_layout()
-    filepath = os.path.join(output_dir_val, f'item_fit_{question_id}.png')
+    filepath = os.path.join(output_dir_val, f'item_fit_{filename_escape(question_id)}.png')
     plt.savefig(filepath)
     plt.close(fig)
     print(f"  Plot saved to {filepath}")
@@ -1825,7 +1733,7 @@ def plot_category_response_functions(question_id, samples_dict, question_idx_map
     ax.set_ylim(0, 1)
     ax.set_xlim(theta_range[0], theta_range[1])
     plt.tight_layout()
-    filepath = os.path.join(output_dir_val, f'crf_{question_id}.png')
+    filepath = os.path.join(output_dir_val, f'crf_{filename_escape(question_id)}.png')
     plt.savefig(filepath)
     plt.close(fig)
     print(f"  Plot saved to {filepath}")
@@ -1836,7 +1744,7 @@ def calculate_grm_item_information_approx(theta_val, a_val, cutpoints_val, n_cat
     """Calculates GRM Item Information using approximate formula."""
     if n_categories < 2:
         return 0.0
-        num_cutpoints = n_categories - 1
+    num_cutpoints = n_categories - 1
     if len(cutpoints_val) != num_cutpoints:
         return 0.0  # Handle error
     cutpoints_val = np.sort(cutpoints_val)
@@ -1913,7 +1821,7 @@ def plot_item_information_function(question_id, samples_dict, question_idx_map_v
     ax.set_ylim(bottom=0)
     ax.set_xlim(theta_range[0], theta_range[1])
     plt.tight_layout()
-    filepath = os.path.join(output_dir_val, f'iif_{question_id}.png')
+    filepath = os.path.join(output_dir_val, f'iif_{filename_escape(question_id)}.png')
     plt.savefig(filepath)
     plt.close(fig)
     print(f"  Plot saved to {filepath}")
@@ -2014,12 +1922,9 @@ if theta_df is not None:
     actual_years_final = sorted(theta_df[YEAR_COL].unique())
     if len(actual_years_final) >= 2:
         years_to_plot = [actual_years_final[0], actual_years_final[-1]]  # Compare first and last
-        print(f"\nGenerating REORG slope charts comparing {years_to_plot[0]} and {years_to_plot[1]}...")
-        for cat_name in category_mapping_final.keys():
-            plot_reorg_slope_chart(theta_df, cat_name, ID_VAR, YEAR_COL, years_to_plot,
-                                   PARENT_TO_CHILD_MAPPING, OUTPUT_DIR)  # Use global map
-        print(
-            f"\nGenerating STANDARDIZED (internal) REORG slope charts comparing {years_to_plot[0]} and {years_to_plot[1]}...")
+
+        print(f"\nGenerating STANDARDIZED (internal) REORG slope charts "
+              f"comparing {years_to_plot[0]} and {years_to_plot[1]}...")
         for cat_name in cat_names_list_plot:  # Use list derived when creating maps
             plot_reorg_slope_chart_standardized_internal(theta_df_viz=theta_df, category_name_viz=cat_name,
                                                          id_var_viz=ID_VAR, year_col_viz=YEAR_COL,
