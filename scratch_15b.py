@@ -21,6 +21,14 @@ Structure:
     7. Visualization Functions (Standardized Slope, Omega, Item/Test Info, ICC/KDE, CRF)
     8. Main Execution Flow & Reporting (Incl. Calling New Plots & Optional Parameter Recovery)
     9. DORA Specific Considerations (Commentary)
+
+
+
+TODO:
+* Check if any sigma is much greater than the answer range (e.g., 1000+, given answers from 1-6)
+* Check for data problems (excessive outliers) if nu turns out to be 1 when using a parameterized student's t distribution 
+* Add a comment somewhere that pystan automatically truncates the distribution to a half normal, which is why there's no `half_normal` in pystan (at least not in 2.19)
+* Visualize `arviz.plot_loo_pit()` too
 """
 
 import os
@@ -575,6 +583,7 @@ model {
   mu ~ normal(0, 1);        // Prior for overall mean of each capability dimension.
                           // Assumes capabilities are centered around 0 on latent scale.
                           // Sensitivity Check: normal(0, 0.5) or normal(0, 2)
+                          // Consider also student_t(7, 0, 1), and perhaps parameterize nu>=1 as an integer
 
   sigma ~ normal(0, 1);     // Prior for variability of each capability across teams/years.
                           // Constrained positive. normal(0,1) is weakly informative.
@@ -591,7 +600,7 @@ model {
   a ~ lognormal(0, 0.5);    // Prior for discrimination 'a'. Must be positive.
                           // lognormal(0, 0.5) keeps most values moderate (e.g., 0.5-2.0).
                           // Sensitivity Check 1: a ~ lognormal(0, 1);   // More variable 'a' allowed
-                          // Sensitivity Check 2: a ~ half_normal(0, 1); // Alternative positive prior
+                          // Sensitivity Check 2: a ~ normal(0, 1); // Actually half-normal - alternative positive prior
 
   // Prior for cutpoints (thresholds between response categories on latent scale)
   for (k in 1:K) {
