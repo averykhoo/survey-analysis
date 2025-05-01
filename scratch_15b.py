@@ -29,6 +29,9 @@ TODO:
 * Check for data problems (excessive outliers) if nu turns out to be 1 when using a parameterized student's t distribution 
 * Add a comment somewhere that pystan automatically truncates the distribution to a half normal, which is why there's no `half_normal` in pystan (at least not in 2.19)
 * Visualize `arviz.plot_loo_pit()` too
+* Plot CRF  per-category
+* Plot 100% stacked charts for each category (answers ordered 6-1) ordered by team performance (highest latent trait score on top)
+* Also plot 100% stacked charts for each team, ordered by category performance
 """
 
 import os
