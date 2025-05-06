@@ -1278,6 +1278,14 @@ if 'theta' in samples:
     # Reorder columns
     theta_df = theta_df[[ID_VAR, YEAR_COL, 'group', 'group_idx'] + theta_columns]
 
+    # nullify theta where there were no non-null responses
+    for group in theta_df['group']:
+        _id_var, _year = group.split('|')
+        _year = int(_year)
+        for theta_column in theta_columns:
+            if len(df_raw[(df_raw[ID_VAR] == _id_var) & (df_raw[YEAR_COL] == _year)][category_mapping_initial[theta_column[6:]]].dropna(how='all')) == 0:
+                theta_df.loc[(theta_df['group'] == group), theta_column] = float('nan')
+
     print("\nEstimated Team Capabilities (Theta Posterior Means):")
     print(theta_df.head())
     theta_filepath = os.path.join(OUTPUT_DIR, 'team_capability_estimates.csv')
