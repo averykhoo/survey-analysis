@@ -1,152 +1,452 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Interactive Graded Response Model (GRM) Visualization</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    body{font-family:'Inter',sans-serif}
-    .slider-container{margin-bottom:.5rem;display:flex;flex-direction:column}
-    .slider-label-group{display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem}
-    .slider-label{font-weight:500;font-size:.875rem}
-    .slider-value{min-width:40px;text-align:right;font-weight:500;font-size:.875rem;padding-left:.5rem}
-    input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:8px;background:#e5e7eb;border-radius:4px;outline:none;opacity:.9}
-    input[type=range]::-webkit-slider-thumb{width:18px;height:18px;background:#3b82f6;border-radius:50%;cursor:pointer;-webkit-appearance:none;appearance:none}
-    input[type=range]::-moz-range-thumb{width:18px;height:18px;background:#3b82f6;border-radius:50%;cursor:pointer;border:none}
-    .info-box{background-color:#f3f4f6;border-left:4px solid #3b82f6;padding:1rem;margin-bottom:1.5rem;border-radius:.25rem}
-    .chart-container{position:relative;width:100%;height:45vh}
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Graded Response Model (GRM) Visualization</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif
+        }
+
+        .slider-container {
+            margin-bottom: .5rem;
+            display: flex;
+            flex-direction: column
+        }
+
+        .slider-label-group {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: .25rem
+        }
+
+        .slider-label {
+            font-weight: 500;
+            font-size: .875rem
+        }
+
+        .slider-value {
+            min-width: 40px;
+            text-align: right;
+            font-weight: 500;
+            font-size: .875rem;
+            padding-left: .5rem
+        }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            outline: none;
+            opacity: .9
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            width: 18px;
+            height: 18px;
+            background: #3b82f6;
+            border-radius: 50%;
+            cursor: pointer;
+            -webkit-appearance: none;
+            appearance: none
+        }
+
+        input[type=range]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: #3b82f6;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none
+        }
+
+        .info-box {
+            background-color: #f3f4f6;
+            border-left: 4px solid #3b82f6;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            border-radius: .25rem
+        }
+
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 45vh
+        }
+    </style>
 </head>
 <body class="bg-gray-50 p-4 md:p-8">
 <div class="container mx-auto max-w-6xl bg-white p-6 rounded-lg shadow-xl">
-  <header class="mb-6 text-center"><h1 class="text-3xl font-bold text-gray-800">Interactive Graded Response Model (GRM) Visualization</h1></header>
-  <div class="info-box">
-    <h2 class="text-xl font-semibold text-gray-700 mb-2">How to Use This Tool:</h2>
-    <p class="text-gray-600 leading-relaxed">Adjust the sliders to explore how <strong>Theta (θ)</strong>, <strong>Discrimination (a)</strong>, the <strong>Number of Cutpoints</strong>, and each <strong>Cutpoint (b<sub>k</sub>)</strong> influence category probabilities, item information, and more.</p>
-    <ul class="list-disc list-inside mt-2 text-gray-600 space-y-1 text-sm">
-      <li><strong>Theta (θ):</strong> Person's trait level.</li>
-      <li><strong>Discrimination (a):</strong> Item's ability to differentiate between trait levels.</li>
-      <li><strong>Number of Cutpoints:</strong> Response categories = cutpoints + 1.</li>
-      <li><strong>Cutpoints (b<sub>k</sub>):</strong> Ordered thresholds along θ (b<sub>1</sub> ≤ b<sub>2</sub> ≤ …).</li>
-    </ul>
-  </div>
-  <div class="grid grid-cols-1 lg:grid-cols-7 gap-x-6 gap-y-4 mb-8">
-    <!-- Controls side -->
-    <div class="lg:col-span-2 space-y-4 lg:sticky lg:top-6 max-h-[calc(100vh-10rem)] lg:overflow-y-auto">
-      <div class="p-3 bg-slate-100 rounded-md shadow-sm space-y-3">
-        <div class="slider-container"><div class="slider-label-group"><label class="slider-label" for="thetaSlider">Theta (θ):</label><span id="thetaValue" class="slider-value">0.0</span></div><input id="thetaSlider" type="range" min="-4" max="4" step="0.1" value="0"></div>
-        <div class="slider-container"><div class="slider-label-group"><label class="slider-label" for="aSlider">Discrimination (a):</label><span id="aValue" class="slider-value">1.0</span></div><input id="aSlider" type="range" min="0.1" max="5" step="0.1" value="1"></div>
-        <div class="slider-container"><div class="slider-label-group"><label class="slider-label" for="numCutpointsSlider">Number of Cutpoints:</label><span id="numCutpointsValue" class="slider-value">3</span></div><input id="numCutpointsSlider" type="range" min="1" max="7" step="1" value="3"></div>
-      </div>
-      <div id="cutpointsControlsContainer" class="p-3 bg-slate-100 rounded-md shadow-sm"><h3 class="text-md font-semibold text-slate-700 mb-2">Cutpoint (b<sub>k</sub>) Values:</h3><div id="cutpointsInnerContainer" class="space-y-3"></div></div>
-      <div class="mt-1 p-4 bg-indigo-50 rounded-md shadow"><h3 class="text-lg font-semibold text-indigo-700 mb-2">Probabilities at Current θ:</h3><div id="probabilitiesDisplay" class="space-y-1 text-sm text-indigo-600"></div></div>
+    <header class="mb-6 text-center"><h1 class="text-3xl font-bold text-gray-800">Interactive Graded Response Model
+        (GRM) Visualization</h1></header>
+    <div class="info-box">
+        <h2 class="text-xl font-semibold text-gray-700 mb-2">How to Use This Tool:</h2>
+        <p class="text-gray-600 leading-relaxed">Adjust the sliders to explore how <strong>Theta (θ)</strong>, <strong>Discrimination
+            (a)</strong>, the <strong>Number of Cutpoints</strong>, and each <strong>Cutpoint (b<sub>k</sub>)</strong>
+            influence category probabilities, item information, and more.</p>
+        <ul class="list-disc list-inside mt-2 text-gray-600 space-y-1 text-sm">
+            <li><strong>Theta (θ):</strong> Person's trait level.</li>
+            <li><strong>Discrimination (a):</strong> Item's ability to differentiate between trait levels.</li>
+            <li><strong>Number of Cutpoints:</strong> Response categories = cutpoints + 1.</li>
+            <li><strong>Cutpoints (b<sub>k</sub>):</strong> Ordered thresholds along θ (b<sub>1</sub> ≤ b<sub>2</sub> ≤ …).
+            </li>
+        </ul>
     </div>
-    <!-- Charts side -->
-    <div class="lg:col-span-5 space-y-8">
-      <div class="chart-container"><canvas id="stackedGrmChart"></canvas></div>
-      <div class="chart-container"><canvas id="grmChart"></canvas></div>
-      <div class="chart-container"><canvas id="barProbChart"></canvas></div>
-<!--      <div class="chart-container"><canvas id="itemInfoChart"></canvas></div>-->
+    <div class="grid grid-cols-1 lg:grid-cols-7 gap-x-6 gap-y-4 mb-8">
+        <!-- Controls side -->
+        <div class="lg:col-span-2 space-y-4 lg:sticky lg:top-6 max-h-[calc(100vh-10rem)] lg:overflow-y-auto">
+            <div class="p-3 bg-slate-100 rounded-md shadow-sm space-y-3">
+                <div class="slider-container">
+                    <div class="slider-label-group"><label class="slider-label" for="thetaSlider">Theta
+                        (θ):</label><span id="thetaValue" class="slider-value">0.0</span></div>
+                    <input id="thetaSlider" type="range" min="-4" max="4" step="0.1" value="0"></div>
+                <div class="slider-container">
+                    <div class="slider-label-group"><label class="slider-label" for="aSlider">Discrimination
+                        (a):</label><span id="aValue" class="slider-value">1.0</span></div>
+                    <input id="aSlider" type="range" min="0.1" max="5" step="0.1" value="1"></div>
+                <div class="slider-container">
+                    <div class="slider-label-group"><label class="slider-label" for="numCutpointsSlider">Number of
+                        Cutpoints:</label><span id="numCutpointsValue" class="slider-value">3</span></div>
+                    <input id="numCutpointsSlider" type="range" min="1" max="7" step="1" value="3"></div>
+            </div>
+            <div id="cutpointsControlsContainer" class="p-3 bg-slate-100 rounded-md shadow-sm"><h3
+                    class="text-md font-semibold text-slate-700 mb-2">Cutpoint (b<sub>k</sub>) Values:</h3>
+                <div id="cutpointsInnerContainer" class="space-y-3"></div>
+            </div>
+            <div class="mt-1 p-4 bg-indigo-50 rounded-md shadow"><h3 class="text-lg font-semibold text-indigo-700 mb-2">
+                Probabilities at Current θ:</h3>
+                <div id="probabilitiesDisplay" class="space-y-1 text-sm text-indigo-600"></div>
+            </div>
+        </div>
+        <!-- Charts side -->
+        <div class="lg:col-span-5 space-y-8">
+            <div class="chart-container">
+                <canvas id="stackedGrmChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="grmChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <canvas id="barProbChart"></canvas>
+            </div>
+            <!-- <div class="chart-container"><canvas id="itemInfoChart"></canvas></div>-->
+        </div>
     </div>
-  </div>
 </div>
 <script>
-// ====== DOM references ======
-const thetaSlider=document.getElementById('thetaSlider');
-const aSlider=document.getElementById('aSlider');
-const numCutpointsSlider=document.getElementById('numCutpointsSlider');
-const thetaValueSpan=document.getElementById('thetaValue');
-const aValueSpan=document.getElementById('aValue');
-const numCutpointsValueSpan=document.getElementById('numCutpointsValue');
-const cutpointsInner=document.getElementById('cutpointsInnerContainer');
-const probDisplay=document.getElementById('probabilitiesDisplay');
-const grmCtx=document.getElementById('grmChart').getContext('2d');
-const stackedCtx=document.getElementById('stackedGrmChart').getContext('2d');
-const barCtx=document.getElementById('barProbChart').getContext('2d');
-// const infoCtx=document.getElementById('itemInfoChart').getContext('2d');
+    // ====== DOM references ======
+    const thetaSlider = document.getElementById('thetaSlider');
+    const aSlider = document.getElementById('aSlider');
+    const numCutpointsSlider = document.getElementById('numCutpointsSlider');
+    const thetaValueSpan = document.getElementById('thetaValue');
+    const aValueSpan = document.getElementById('aValue');
+    const numCutpointsValueSpan = document.getElementById('numCutpointsValue');
+    const cutpointsInner = document.getElementById('cutpointsInnerContainer');
+    const probDisplay = document.getElementById('probabilitiesDisplay');
+    const grmCtx = document.getElementById('grmChart').getContext('2d');
+    const stackedCtx = document.getElementById('stackedGrmChart').getContext('2d');
+    const barCtx = document.getElementById('barProbChart').getContext('2d');
+    // const infoCtx=document.getElementById('itemInfoChart').getContext('2d');
 
-// ====== Constants ======
-const D=1.702,TH_MIN=-4,TH_MAX=4,TH_STEP=.1,B_MIN=-3.5,B_MAX=3.5,B_STEP=.05,DEFAULT_SPREAD=3;
-const COLORS=['rgba(255,99,132,.7)','rgba(54,162,235,.7)','rgba(75,192,192,.7)','rgba(255,206,86,.7)','rgba(153,102,255,.7)','rgba(255,159,64,.7)','rgba(255,99,255,.7)','rgba(0,200,200,.7)'];
-const BORDER_COLORS=COLORS.map(c=>c.replace('.7','1'));
+    // ====== Constants ======
+    const D = 1.702, TH_MIN = -4, TH_MAX = 4, TH_STEP = .1, B_MIN = -3.5, B_MAX = 3.5, B_STEP = .05, DEFAULT_SPREAD = 3;
+    const COLORS = ['rgba(255,99,132,.7)', 'rgba(54,162,235,.7)', 'rgba(75,192,192,.7)', 'rgba(255,206,86,.7)', 'rgba(153,102,255,.7)', 'rgba(255,159,64,.7)', 'rgba(255,99,255,.7)', 'rgba(0,200,200,.7)'];
+    const BORDER_COLORS = COLORS.map(c => c.replace('.7', '1'));
 
-// ====== Globals ======
-let cutpointSliders=[]; // {sl,span}
-let grmChart,stackedChart,barChart,infoChart;
+    // ====== Globals ======
+    let cutpointSliders = []; // {sl,span}
+    let grmChart, stackedChart, barChart, infoChart;
 
-// ====== Utility functions ======
-const setSpan=(span,val,int=false)=>span.textContent=int?parseInt(val):parseFloat(val).toFixed(2);
-const logistic=x=>1/(1+Math.exp(-x));
-const pStar=(theta,a,b)=>1/(1+Math.exp(-D*a*(theta-b)));
-function categoryProbs(theta,a,bs){const m=bs.length,k=m+1,res=new Array(k);
-  if(!m){res[0]=1;return res}
-  const ps=bs.map(b=>pStar(theta,a,b));
-  res[0]=1-ps[0];for(let i=1;i<m;i++)res[i]=ps[i-1]-ps[i];res[m]=ps[m-1];return res.map(p=>Math.max(0,Math.min(1,p)))}
-const itemInfo=(theta,a,bs)=>{if(!bs.length)return 0;const sum=bs.map(b=>pStar(theta,a,b)).reduce((acc,p)=>acc+p*(1-p),0);return Math.pow(D*a,2)*sum};
-function defaultBs(n){if(!n)return[];if(n===1)return[0];const step=DEFAULT_SPREAD/(n-1),start=-DEFAULT_SPREAD/2,arr=[];for(let i=0;i<n;i++)arr.push(parseFloat((start+i*step).toFixed(2)));return arr}
+    // ====== Utility functions ======
+    const setSpan = (span, val, int = false) => span.textContent = int ? parseInt(val) : parseFloat(val).toFixed(2);
+    const logistic = x => 1 / (1 + Math.exp(-x));
+    const pStar = (theta, a, b) => 1 / (1 + Math.exp(-D * a * (theta - b)));
 
-// ====== Cutpoint slider UI ======
-function setupCutpoints(n){cutpointsInner.innerHTML='';cutpointSliders=[];defaultBs(n).forEach((val,i)=>{
-  const wrap=document.createElement('div');wrap.className='slider-container';
-  const grp=document.createElement('div');grp.className='slider-label-group';
-  const lbl=document.createElement('label');lbl.className='slider-label';lbl.innerHTML=`Cutpoint (b<sub>${i+1}</sub>):`;
-  const span=document.createElement('span');span.className='slider-value';
-  grp.append(lbl,span);
-  const sl=document.createElement('input');Object.assign(sl,{type:'range',min:B_MIN,max:B_MAX,step:B_STEP,value:val,className:'w-full'});
-  wrap.append(grp,sl);cutpointsInner.appendChild(wrap);
-  cutpointSliders.push({sl,span});setSpan(span,val);
-  sl.addEventListener('input',()=>{enforceOrder(i);updateAll()});});enforceOrder(-1);updateAll()}
-function enforceOrder(changed){const n=cutpointSliders.length;if(!n)return;if(changed!==-1){let val=parseFloat(cutpointSliders[changed].sl.value);
-  if(changed>0){const prev=parseFloat(cutpointSliders[changed-1].sl.value);if(val<prev){val=prev;cutpointSliders[changed].sl.value=val}}
-  if(changed<n-1){const next=parseFloat(cutpointSliders[changed+1].sl.value);if(val>next){val=next;cutpointSliders[changed].sl.value=val}}}
-  cutpointSliders.forEach((o,i)=>{const val=parseFloat(o.sl.value);o.sl.min=i?parseFloat(cutpointSliders[i-1].sl.value):B_MIN;o.sl.max=i<n-1?parseFloat(cutpointSliders[i+1].sl.value):B_MAX;setSpan(o.span,val)})}
+    function categoryProbs(theta, a, bs) {
+        const m = bs.length, k = m + 1, res = new Array(k);
+        if (!m) {
+            res[0] = 1;
+            return res
+        }
+        const ps = bs.map(b => pStar(theta, a, b));
+        res[0] = 1 - ps[0];
+        for (let i = 1; i < m; i++) res[i] = ps[i - 1] - ps[i];
+        res[m] = ps[m - 1];
+        return res.map(p => Math.max(0, Math.min(1, p)))
+    }
 
-// ====== Chart initialisation ======
-function initCharts(){
-  grmChart=new Chart(grmCtx,{type:'line',data:{labels:[],datasets:[]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{type:'linear',min:TH_MIN,max:TH_MAX,title:{display:true,text:'Theta (θ)',font:{weight:'bold'}}},y:{min:0,max:1,title:{display:true,text:'Probability',font:{weight:'bold'}}}},plugins:{title:{display:true,text:'Category Response Curves'},tooltip:{mode:'index',intersect:false},legend:{position:'top'}},interaction:{mode:'index',intersect:false}}});
-  stackedChart=new Chart(stackedCtx,{type:'line',data:{labels:[],datasets:[]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{type:'linear',min:TH_MIN,max:TH_MAX,title:{display:true,text:'Theta (θ)',font:{weight:'bold'}}},y:{stacked:true,min:0,max:1,title:{display:true,text:'Cumulative Probability',font:{weight:'bold'}}},y2:{position:'right',stacked:false,min:0,max:1,grid:{display:false},ticks:{display:false}}},plugins:{title:{display:true,text:'Stacked Category Probabilities'},tooltip:{mode:'index',intersect:false},legend:{position:'top'}},interaction:{mode:'index',intersect:false}}});
-  barChart=new Chart(barCtx,{type:'bar',data:{labels:[],datasets:[{label:'P(Category | current θ)',data:[],backgroundColor:[],borderColor:[],borderWidth:1}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{title:{display:true,text:'Category',font:{weight:'bold'}}},y:{min:0,max:1,title:{display:true,text:'Probability',font:{weight:'bold'}}}},plugins:{title:{display:true,text:'Current θ Category Probabilities'},legend:{display:false},tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)}`}}}}});
-  // infoChart=new Chart(infoCtx,{type:'line',data:{labels:[],datasets:[{label:'Item Information',borderColor:'rgba(75,85,99,1)',backgroundColor:'rgba(107,114,128,.25)',fill:true,tension:.3,pointRadius:0,data:[]},{label:'Current θ',type:'line',borderColor:'rgba(239,68,68,1)',borderDash:[5,5],fill:false,pointRadius:0,data:[]}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{type:'linear',min:TH_MIN,max:TH_MAX,title:{display:true,text:'Theta (θ)',font:{weight:'bold'}}},y:{title:{display:true,text:'Item Information',font:{weight:'bold'}}}},plugins:{title:{display:true,text:'Item Information Function'},legend:{position:'top'}}}});
-  setupCutpoints(parseInt(numCutpointsSlider.value));
-}
+    const itemInfo = (theta, a, bs) => {
+        if (!bs.length) return 0;
+        const sum = bs.map(b => pStar(theta, a, b)).reduce((acc, p) => acc + p * (1 - p), 0);
+        return Math.pow(D * a, 2) * sum
+    };
 
-// ====== Main update ======
-function updateAll(){
-  const theta=parseFloat(thetaSlider.value),a=parseFloat(aSlider.value),m=parseInt(numCutpointsSlider.value),bs=cutpointSliders.map(o=>parseFloat(o.sl.value));
-  setSpan(thetaValueSpan,theta);setSpan(aValueSpan,a);setSpan(numCutpointsValueSpan,m,true);
-  // θ grid
-  const tVals=[];for(let t=TH_MIN;t<=TH_MAX+1e-9;t+=TH_STEP)tVals.push(parseFloat(t.toFixed(2)));
-  const catData=Array.from({length:m+1},()=>[]),infoVals=[];
-  tVals.forEach(t=>{const pr=categoryProbs(t,a,bs);pr.forEach((p,i)=>catData[i].push(p));infoVals.push(itemInfo(t,a,bs))});
-  // Update grm chart datasets
-  if(grmChart.data.datasets.length-1!==m+1){grmChart.data.datasets=[];for(let i=0;i<m+1;i++)grmChart.data.datasets.push({label:`P(Category ${i})`,borderColor:BORDER_COLORS[i%8],backgroundColor:COLORS[i%8],fill:true,tension:.4,pointRadius:0,data:[]});grmChart.data.datasets.push({id:'θ-line',label:'Current θ',type:'line',borderColor:'rgba(239,68,68,1)',borderDash:[5,5],fill:false,pointRadius:0,data:[]})}
-  grmChart.data.labels=tVals;grmChart.data.datasets.forEach((ds,i)=>{if(i<m+1)ds.data=catData[i];else ds.data=[{x:theta,y:0},{x:theta,y:1}]});grmChart.update('none');
-  // Update stacked chart
-  if(stackedChart.data.datasets.length-1!==m+1){stackedChart.data.datasets=[];for(let i=0;i<m+1;i++)stackedChart.data.datasets.push({label:`Cat ${i}`,borderColor:BORDER_COLORS[i%8],backgroundColor:COLORS[i%8],fill:true,tension:.4,pointRadius:0,data:[]});stackedChart.data.datasets.push({id:'θ-line-s',label:'Current θ',type:'line',yAxisID:'y2',borderColor:'rgba(239,68,68,1)',borderDash:[5,5],fill:false,pointRadius:0,data:[]})}
-  stackedChart.data.labels=tVals;stackedChart.data.datasets.forEach((ds,i)=>{if(i<m+1)ds.data=catData[i];else ds.data=[{x:theta,y:0},{x:theta,y:1}]});stackedChart.update('none');
-  // Update bar chart
-  const nowProbs=categoryProbs(theta,a,bs);
-  barChart.data.labels=nowProbs.map((_,i)=>`Cat ${i}`);
-  barChart.data.datasets[0].data=nowProbs;
-  barChart.data.datasets[0].backgroundColor=nowProbs.map((_,i)=>COLORS[i%8]);
-  barChart.data.datasets[0].borderColor=nowProbs.map((_,i)=>BORDER_COLORS[i%8]);
-  barChart.update('none');
-  // Update info chart
-  // infoChart.data.labels=tVals;
-  // infoChart.data.datasets[0].data=infoVals;
-  // infoChart.data.datasets[1].data=[{x:theta,y:0},{x:theta,y:Math.max(...infoVals)}];
-  // infoChart.update('none');
-  // Prob display
-  probDisplay.innerHTML='';let s=0;nowProbs.forEach((p,i)=>{s+=p;probDisplay.innerHTML+=`<p>P(Cat ${i} | θ=${theta.toFixed(1)}) = <span class='font-semibold'>${p.toFixed(3)}</span></p>`});probDisplay.innerHTML+=`<p><strong>Sum = ${s.toFixed(3)}</strong></p>`}
+    function defaultBs(n) {
+        if (!n) return [];
+        if (n === 1) return [0];
+        const step = DEFAULT_SPREAD / (n - 1), start = -DEFAULT_SPREAD / 2, arr = [];
+        for (let i = 0; i < n; i++) arr.push(parseFloat((start + i * step).toFixed(2)));
+        return arr
+    }
 
-// ====== Event listeners ======
-[thetaSlider,aSlider].forEach(sl=>sl.addEventListener('input',updateAll));
-numCutpointsSlider.addEventListener('input',()=>{setupCutpoints(parseInt(numCutpointsSlider.value))});
+    // ====== Cutpoint slider UI ======
+    function setupCutpoints(n) {
+        cutpointsInner.innerHTML = '';
+        cutpointSliders = [];
+        defaultBs(n).forEach((val, i) => {
+            const wrap = document.createElement('div');
+            wrap.className = 'slider-container';
+            const grp = document.createElement('div');
+            grp.className = 'slider-label-group';
+            const lbl = document.createElement('label');
+            lbl.className = 'slider-label';
+            lbl.innerHTML = `Cutpoint (b<sub>${i + 1}</sub>):`;
+            const span = document.createElement('span');
+            span.className = 'slider-value';
+            grp.append(lbl, span);
+            const sl = document.createElement('input');
+            Object.assign(sl, {type: 'range', min: B_MIN, max: B_MAX, step: B_STEP, value: val, className: 'w-full'});
+            wrap.append(grp, sl);
+            cutpointsInner.appendChild(wrap);
+            cutpointSliders.push({sl, span});
+            setSpan(span, val);
+            sl.addEventListener('input', () => {
+                enforceOrder(i);
+                updateAll()
+            });
+        });
+        enforceOrder(-1);
+        updateAll()
+    }
 
-// ====== Initialise ======
-document.addEventListener('DOMContentLoaded',initCharts);
+    function enforceOrder(changed) {
+        const n = cutpointSliders.length;
+        if (!n) return;
+        if (changed !== -1) {
+            let val = parseFloat(cutpointSliders[changed].sl.value);
+            if (changed > 0) {
+                const prev = parseFloat(cutpointSliders[changed - 1].sl.value);
+                if (val < prev) {
+                    val = prev;
+                    cutpointSliders[changed].sl.value = val
+                }
+            }
+            if (changed < n - 1) {
+                const next = parseFloat(cutpointSliders[changed + 1].sl.value);
+                if (val > next) {
+                    val = next;
+                    cutpointSliders[changed].sl.value = val
+                }
+            }
+        }
+        cutpointSliders.forEach((o, i) => {
+            const val = parseFloat(o.sl.value);
+            o.sl.min = i ? parseFloat(cutpointSliders[i - 1].sl.value) : B_MIN;
+            o.sl.max = i < n - 1 ? parseFloat(cutpointSliders[i + 1].sl.value) : B_MAX;
+            setSpan(o.span, val)
+        })
+    }
+
+    // ====== Chart initialisation ======
+    function initCharts() {
+        grmChart = new Chart(grmCtx, {
+            type: 'line',
+            data: {labels: [], datasets: []},
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'linear',
+                        min: TH_MIN,
+                        max: TH_MAX,
+                        title: {display: true, text: 'Theta (θ)', font: {weight: 'bold'}}
+                    }, y: {min: 0, max: 1, title: {display: true, text: 'Probability', font: {weight: 'bold'}}}
+                },
+                plugins: {
+                    title: {display: true, text: 'Category Response Curves'},
+                    tooltip: {mode: 'index', intersect: false},
+                    legend: {position: 'top'}
+                },
+                interaction: {mode: 'index', intersect: false}
+            }
+        });
+        stackedChart = new Chart(stackedCtx, {
+            type: 'line',
+            data: {labels: [], datasets: []},
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        type: 'linear',
+                        min: TH_MIN,
+                        max: TH_MAX,
+                        title: {display: true, text: 'Theta (θ)', font: {weight: 'bold'}}
+                    },
+                    y: {
+                        stacked: true,
+                        min: 0,
+                        max: 1,
+                        title: {display: true, text: 'Cumulative Probability', font: {weight: 'bold'}}
+                    },
+                    y2: {
+                        position: 'right',
+                        stacked: false,
+                        min: 0,
+                        max: 1,
+                        grid: {display: false},
+                        ticks: {display: false}
+                    }
+                },
+                plugins: {
+                    title: {display: true, text: 'Stacked Category Probabilities'},
+                    tooltip: {mode: 'index', intersect: false},
+                    legend: {position: 'top'}
+                },
+                interaction: {mode: 'index', intersect: false}
+            }
+        });
+        barChart = new Chart(barCtx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'P(Category | current θ)',
+                    data: [],
+                    backgroundColor: [],
+                    borderColor: [],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {title: {display: true, text: 'Category', font: {weight: 'bold'}}},
+                    y: {min: 0, max: 1, title: {display: true, text: 'Probability', font: {weight: 'bold'}}}
+                },
+                plugins: {
+                    title: {display: true, text: 'Current θ Category Probabilities'},
+                    legend: {display: false},
+                    tooltip: {callbacks: {label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(3)}`}}
+                }
+            }
+        });
+        // infoChart=new Chart(infoCtx,{type:'line',data:{labels:[],datasets:[{label:'Item Information',borderColor:'rgba(75,85,99,1)',backgroundColor:'rgba(107,114,128,.25)',fill:true,tension:.3,pointRadius:0,data:[]},{label:'Current θ',type:'line',borderColor:'rgba(239,68,68,1)',borderDash:[5,5],fill:false,pointRadius:0,data:[]}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{type:'linear',min:TH_MIN,max:TH_MAX,title:{display:true,text:'Theta (θ)',font:{weight:'bold'}}},y:{title:{display:true,text:'Item Information',font:{weight:'bold'}}}},plugins:{title:{display:true,text:'Item Information Function'},legend:{position:'top'}}}});
+        setupCutpoints(parseInt(numCutpointsSlider.value));
+    }
+
+    // ====== Main update ======
+    function updateAll() {
+        const theta = parseFloat(thetaSlider.value), a = parseFloat(aSlider.value),
+            m = parseInt(numCutpointsSlider.value), bs = cutpointSliders.map(o => parseFloat(o.sl.value));
+        setSpan(thetaValueSpan, theta);
+        setSpan(aValueSpan, a);
+        setSpan(numCutpointsValueSpan, m, true);
+        // θ grid
+        const tVals = [];
+        for (let t = TH_MIN; t <= TH_MAX + 1e-9; t += TH_STEP) tVals.push(parseFloat(t.toFixed(2)));
+        const catData = Array.from({length: m + 1}, () => []), infoVals = [];
+        tVals.forEach(t => {
+            const pr = categoryProbs(t, a, bs);
+            pr.forEach((p, i) => catData[i].push(p));
+            infoVals.push(itemInfo(t, a, bs))
+        });
+        // Update grm chart datasets
+        if (grmChart.data.datasets.length - 1 !== m + 1) {
+            grmChart.data.datasets = [];
+            for (let i = 0; i < m + 1; i++) grmChart.data.datasets.push({
+                label: `P(Category ${i})`,
+                borderColor: BORDER_COLORS[i % 8],
+                backgroundColor: COLORS[i % 8],
+                fill: true,
+                tension: .4,
+                pointRadius: 0,
+                data: []
+            });
+            grmChart.data.datasets.push({
+                id: 'θ-line',
+                label: 'Current θ',
+                type: 'line',
+                borderColor: 'rgba(239,68,68,1)',
+                borderDash: [5, 5],
+                fill: false,
+                pointRadius: 0,
+                data: []
+            })
+        }
+        grmChart.data.labels = tVals;
+        grmChart.data.datasets.forEach((ds, i) => {
+            if (i < m + 1) ds.data = catData[i]; else ds.data = [{x: theta, y: 0}, {x: theta, y: 1}]
+        });
+        grmChart.update('none');
+        // Update stacked chart
+        if (stackedChart.data.datasets.length - 1 !== m + 1) {
+            stackedChart.data.datasets = [];
+            for (let i = 0; i < m + 1; i++) stackedChart.data.datasets.push({
+                label: `Cat ${i}`,
+                borderColor: BORDER_COLORS[i % 8],
+                backgroundColor: COLORS[i % 8],
+                fill: true,
+                tension: .4,
+                pointRadius: 0,
+                data: []
+            });
+            stackedChart.data.datasets.push({
+                id: 'θ-line-s',
+                label: 'Current θ',
+                type: 'line',
+                yAxisID: 'y2',
+                borderColor: 'rgba(239,68,68,1)',
+                borderDash: [5, 5],
+                fill: false,
+                pointRadius: 0,
+                data: []
+            })
+        }
+        stackedChart.data.labels = tVals;
+        stackedChart.data.datasets.forEach((ds, i) => {
+            if (i < m + 1) ds.data = catData[i]; else ds.data = [{x: theta, y: 0}, {x: theta, y: 1}]
+        });
+        stackedChart.update('none');
+        // Update bar chart
+        const nowProbs = categoryProbs(theta, a, bs);
+        barChart.data.labels = nowProbs.map((_, i) => `Cat ${i}`);
+        barChart.data.datasets[0].data = nowProbs;
+        barChart.data.datasets[0].backgroundColor = nowProbs.map((_, i) => COLORS[i % 8]);
+        barChart.data.datasets[0].borderColor = nowProbs.map((_, i) => BORDER_COLORS[i % 8]);
+        barChart.update('none');
+        // Update info chart
+        // infoChart.data.labels=tVals;
+        // infoChart.data.datasets[0].data=infoVals;
+        // infoChart.data.datasets[1].data=[{x:theta,y:0},{x:theta,y:Math.max(...infoVals)}];
+        // infoChart.update('none');
+        // Prob display
+        probDisplay.innerHTML = '';
+        let s = 0;
+        nowProbs.forEach((p, i) => {
+            s += p;
+            probDisplay.innerHTML += `<p>P(Cat ${i} | θ=${theta.toFixed(1)}) = <span class='font-semibold'>${p.toFixed(3)}</span></p>`
+        });
+        probDisplay.innerHTML += `<p><strong>Sum = ${s.toFixed(3)}</strong></p>`
+    }
+
+    // ====== Event listeners ======
+    [thetaSlider, aSlider].forEach(sl => sl.addEventListener('input', updateAll));
+    numCutpointsSlider.addEventListener('input', () => {
+        setupCutpoints(parseInt(numCutpointsSlider.value))
+    });
+
+    // ====== Initialise ======
+    document.addEventListener('DOMContentLoaded', initCharts);
 </script>
 </body>
 </html>
