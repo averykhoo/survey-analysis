@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Graded Response Model (GRM) Visualization</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .slider-container { margin-bottom: 1rem; }
+        .slider-label {
+            min-width: 180px; /* Adjusted min-width for better alignment */
+            font-weight: 500;
+        }
+        .slider-value {
+            min-width: 50px;
+            text-align: right;
+            font-weight: 500;
+        }
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 8px;
+            background: #d3d3d3;
+            outline: none;
+            opacity: 0.9;
+            -webkit-transition: .2s;
+            transition: opacity .2s;
+            border-radius: 4px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #3b82f6; /* Tailwind blue-500 */
+            cursor: pointer;
+            border-radius: 50%;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #3b82f6; /* Tailwind blue-500 */
+            cursor: pointer;
+            border-radius: 50%;
+            border: none;
+        }
+        .info-box {
+            background-color: #f3f4f6; /* Tailwind gray-100 */
+            border-left: 4px solid #3b82f6; /* Tailwind blue-500 */
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            border-radius: 0.25rem;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 p-4 md:p-8">
+    <div class="container mx-auto max-w-5xl bg-white p-6 rounded-lg shadow-xl">
+        <header class="mb-6 text-center">
+            <h1 class="text-3xl font-bold text-gray-800">Interactive Graded Response Model (GRM) Visualization</h1>
+        </header>
+
+        <div class="info-box">
+            <h2 class="text-xl font-semibold text-gray-700 mb-2">How to Use This Tool:</h2>
+            <p class="text-gray-600 leading-relaxed">
+                This tool visualizes the Graded Response Model (GRM), a common model in Item Response Theory (IRT). It shows how the probability of selecting different ordered response categories for a question changes based on a person's underlying trait level (<strong>Theta</strong>) and the characteristics of the question itself (<strong>Discrimination 'a'</strong> and <strong>Cutpoints 'b'</strong>).
+            </p>
+            <ul class="list-disc list-inside mt-2 text-gray-600 space-y-1">
+                <li><strong>Theta (θ):</strong> Represents the person's trait level (e.g., ability, attitude). Higher theta means more of the trait.</li>
+                <li><strong>Discrimination (a):</strong> Indicates how well the item differentiates between people with different trait levels. Higher 'a' means steeper probability curves.</li>
+                <li><strong>Cutpoints (b1, b2, b3):</strong> These are thresholds on the theta scale. For an item with 4 response categories (0, 1, 2, 3), there are 3 cutpoints.
+                    <ul class="list-disc list-inside ml-6">
+                        <li><strong>b1:</strong> Point related to transitioning from Category 0 to Category 1 or higher.</li>
+                        <li><strong>b2:</strong> Point related to transitioning from Category 1 to Category 2 or higher.</li>
+                        <li><strong>b3:</strong> Point related to transitioning from Category 2 to Category 3.</li>
+                    </ul>
+                     The cutpoints must be ordered (b1 ≤ b2 ≤ b3). The sliders will enforce this.
+                </li>
+            </ul>
+            <p class="mt-3 text-sm text-gray-500">
+                <em>Note: You mentioned MGRM (Multidimensional GRM). This visualization is for a unidimensional GRM. An MGRM would involve multiple theta dimensions and 'a' vectors, which is more complex to visualize interactively in this format.</em>
+            </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="md:col-span-1 space-y-4 pr-0 md:pr-4">
+                <div>
+                    <div class="flex justify-between items-center slider-container">
+                        <label for="thetaSlider" class="slider-label">Theta (θ):</label>
+                        <input type="range" id="thetaSlider" min="-4" max="4" value="0" step="0.1" class="flex-grow mx-2">
+                        <span id="thetaValue" class="slider-value">0.0</span>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center slider-container">
+                        <label for="aSlider" class="slider-label">Discrimination (a):</label>
+                        <input type="range" id="aSlider" min="0.1" max="5" value="1" step="0.1" class="flex-grow mx-2">
+                        <span id="aValue" class="slider-value">1.0</span>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center slider-container">
+                        <label for="b1Slider" class="slider-label">Cutpoint (b1):</label>
+                        <input type="range" id="b1Slider" min="-3" max="3" value="-1.5" step="0.1" class="flex-grow mx-2">
+                        <span id="b1Value" class="slider-value">-1.5</span>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center slider-container">
+                        <label for="b2Slider" class="slider-label">Cutpoint (b2):</label>
+                        <input type="range" id="b2Slider" min="-3" max="3" value="0" step="0.1" class="flex-grow mx-2">
+                        <span id="b2Value" class="slider-value">0.0</span>
+                    </div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center slider-container">
+                        <label for="b3Slider" class="slider-label">Cutpoint (b3):</label>
+                        <input type="range" id="b3Slider" min="-3" max="3" value="1.5" step="0.1" class="flex-grow mx-2">
+                        <span id="b3Value" class="slider-value">1.5</span>
+                    </div>
+                </div>
+
+                <div class="mt-6 p-4 bg-indigo-50 rounded-md shadow">
+                    <h3 class="text-lg font-semibold text-indigo-700 mb-2">Probabilities at Current Theta:</h3>
+                    <div id="probabilitiesDisplay" class="space-y-1 text-sm text-indigo-600">
+                        </div>
+                </div>
+            </div>
+
+            <div class="md:col-span-2">
+                <canvas id="grmChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const thetaSlider = document.getElementById('thetaSlider');
+        const aSlider = document.getElementById('aSlider');
+        const b1Slider = document.getElementById('b1Slider');
+        const b2Slider = document.getElementById('b2Slider');
+        const b3Slider = document.getElementById('b3Slider');
+
+        const thetaValueSpan = document.getElementById('thetaValue');
+        const aValueSpan = document.getElementById('aValue');
+        const b1ValueSpan = document.getElementById('b1Value');
+        const b2ValueSpan = document.getElementById('b2Value');
+        const b3ValueSpan = document.getElementById('b3Value');
+
+        const probabilitiesDisplay = document.getElementById('probabilitiesDisplay');
+        const ctx = document.getElementById('grmChart').getContext('2d');
+
+        // --- IRT Parameters ---
+        const D = 1.702; // Scaling constant
+        const NUM_CATEGORIES = 4; // 3 cutpoints -> 4 categories (0, 1, 2, 3)
+        const THETA_MIN_PLOT = -4;
+        const THETA_MAX_PLOT = 4;
+        const THETA_STEP_PLOT = 0.1;
+
+        let chart; // To hold the Chart.js instance
+
+        // --- Helper Functions ---
+        function updateSliderValueDisplay(spanElement, value) {
+            spanElement.textContent = parseFloat(value).toFixed(1);
+        }
+
+        /**
+         * Calculates P_star_k(theta) = P(response >= k | theta)
+         * P*(theta) = 1 / (1 + exp(-D * a * (theta - b_k)))
+         */
+        function calculatePStar(theta, a, b_k) {
+            return 1 / (1 + Math.exp(-D * a * (theta - b_k)));
+        }
+
+        /**
+         * Calculates probabilities for each category for a given theta.
+         * bValues is an array of cutpoints [b1, b2, b3]
+         */
+        function getCategoryProbabilities(theta, a, bValues) {
+            const pStars = bValues.map(b_k => calculatePStar(theta, a, b_k));
+
+            const probabilities = [];
+            // P(Category 0) = 1 - P*(theta, b1)
+            probabilities[0] = 1 - pStars[0];
+            // P(Category 1) = P*(theta, b1) - P*(theta, b2)
+            probabilities[1] = pStars[0] - pStars[1];
+            // P(Category 2) = P*(theta, b2) - P*(theta, b3)
+            probabilities[2] = pStars[1] - pStars[2];
+            // P(Category 3) = P*(theta, b3)
+            probabilities[3] = pStars[2];
+
+            // Ensure probabilities are not negative due to floating point issues or crossed cutpoints (though sliders prevent crossing)
+            return probabilities.map(p => Math.max(0, Math.min(1, p)));
+        }
+
+        // --- Chart Update Function ---
+        function updateChart() {
+            const currentTheta = parseFloat(thetaSlider.value);
+            const currentA = parseFloat(aSlider.value);
+            const currentB1 = parseFloat(b1Slider.value);
+            const currentB2 = parseFloat(b2Slider.value);
+            const currentB3 = parseFloat(b3Slider.value);
+
+            const bValues = [currentB1, currentB2, currentB3];
+
+            // Update slider value displays
+            updateSliderValueDisplay(thetaValueSpan, currentTheta);
+            updateSliderValueDisplay(aValueSpan, currentA);
+            updateSliderValueDisplay(b1ValueSpan, currentB1);
+            updateSliderValueDisplay(b2ValueSpan, currentB2);
+            updateSliderValueDisplay(b3ValueSpan, currentB3);
+
+            // Generate data for the chart
+            const thetaRange = [];
+            for (let t = THETA_MIN_PLOT; t <= THETA_MAX_PLOT; t += THETA_STEP_PLOT) {
+                thetaRange.push(parseFloat(t.toFixed(2))); // Keep precision
+            }
+
+            const categoryData = Array(NUM_CATEGORIES).fill(null).map(() => []);
+
+            thetaRange.forEach(t_val => {
+                const probs = getCategoryProbabilities(t_val, currentA, bValues);
+                probs.forEach((p, catIndex) => {
+                    categoryData[catIndex].push(p);
+                });
+            });
+
+            // Update chart datasets
+            chart.data.labels = thetaRange;
+            chart.data.datasets.forEach((dataset, index) => {
+                if (index < NUM_CATEGORIES) { // Category probability lines
+                    dataset.data = categoryData[index];
+                } else if (dataset.id === 'thetaLine') { // Vertical theta line
+                    dataset.data = [{x: currentTheta, y: 0}, {x: currentTheta, y: 1}];
+                }
+            });
+            chart.update('none'); // 'none' for no animation during updates for smoother interaction
+
+            // Display probabilities for currentTheta
+            const probsAtCurrentTheta = getCategoryProbabilities(currentTheta, currentA, bValues);
+            probabilitiesDisplay.innerHTML = ''; // Clear previous
+            let sumProbs = 0;
+            probsAtCurrentTheta.forEach((p, i) => {
+                const pElem = document.createElement('p');
+                pElem.innerHTML = `P(Category ${i} | θ=${currentTheta.toFixed(1)}) = <span class="font-semibold">${p.toFixed(3)}</span>`;
+                probabilitiesDisplay.appendChild(pElem);
+                sumProbs += p;
+            });
+            const sumElem = document.createElement('p');
+            sumElem.innerHTML = `<strong>Sum of Probabilities = ${sumProbs.toFixed(3)}</strong>`;
+            probabilitiesDisplay.appendChild(sumElem);
+        }
+
+        // --- Event Listeners for Sliders ---
+        [thetaSlider, aSlider].forEach(slider => {
+            slider.addEventListener('input', updateChart);
+        });
+
+        // Special handling for cutpoint sliders to maintain order b1 <= b2 <= b3
+        b1Slider.addEventListener('input', () => {
+            let valB1 = parseFloat(b1Slider.value);
+            let valB2 = parseFloat(b2Slider.value);
+            let valB3 = parseFloat(b3Slider.value);
+
+            if (valB1 > valB2) {
+                b2Slider.value = valB1;
+                valB2 = valB1;
+                updateSliderValueDisplay(b2ValueSpan, valB1);
+            }
+            if (valB2 > valB3) { // if b2 was pushed up, it might push b3
+                b3Slider.value = valB2;
+                updateSliderValueDisplay(b3ValueSpan, valB2);
+            }
+            b2Slider.min = valB1;
+            updateChart();
+        });
+
+        b2Slider.addEventListener('input', () => {
+            let valB1 = parseFloat(b1Slider.value);
+            let valB2 = parseFloat(b2Slider.value);
+            let valB3 = parseFloat(b3Slider.value);
+
+            if (valB2 < valB1) {
+                b1Slider.value = valB2;
+                updateSliderValueDisplay(b1ValueSpan, valB2);
+            }
+            if (valB2 > valB3) {
+                b3Slider.value = valB2;
+                updateSliderValueDisplay(b3ValueSpan, valB2);
+            }
+            b1Slider.max = valB2;
+            b3Slider.min = valB2;
+            updateChart();
+        });
+
+        b3Slider.addEventListener('input', () => {
+            let valB1 = parseFloat(b1Slider.value);
+            let valB2 = parseFloat(b2Slider.value);
+            let valB3 = parseFloat(b3Slider.value);
+
+            if (valB3 < valB2) {
+                b2Slider.value = valB3;
+                valB2 = valB3;
+                updateSliderValueDisplay(b2ValueSpan, valB3);
+            }
+            if (valB2 < valB1) { // if b2 was pulled down, it might pull b1
+                b1Slider.value = valB2;
+                updateSliderValueDisplay(b1ValueSpan, valB2);
+            }
+            b2Slider.max = valB3;
+            updateChart();
+        });
+
+        // --- Initialize Chart ---
+        function initializeChart() {
+            const initialTheta = parseFloat(thetaSlider.value);
+            const initialA = parseFloat(aSlider.value);
+            const initialB1 = parseFloat(b1Slider.value);
+            const initialB2 = parseFloat(b2Slider.value);
+            const initialB3 = parseFloat(b3Slider.value);
+
+            // Set initial min/max for cutpoint sliders based on default values
+            b2Slider.min = initialB1;
+            b1Slider.max = initialB2;
+            b3Slider.min = initialB2;
+            b2Slider.max = initialB3;
+
+            const categoryColors = [
+                'rgba(255, 99, 132, 0.8)',  // Red
+                'rgba(54, 162, 235, 0.8)', // Blue
+                'rgba(75, 192, 192, 0.8)', // Green
+                'rgba(255, 206, 86, 0.8)'  // Yellow
+            ];
+            const categoryBorderColors = [
+                'rgba(255, 99, 132, 1)',
+                'rgba(54, 162, 235, 1)',
+                'rgba(75, 192, 192, 1)',
+                'rgba(255, 206, 86, 1)'
+            ];
+
+            const datasets = [];
+            for (let i = 0; i < NUM_CATEGORIES; i++) {
+                datasets.push({
+                    label: `P(Category ${i})`,
+                    data: [], // To be filled by updateChart
+                    borderColor: categoryBorderColors[i],
+                    backgroundColor: categoryColors[i],
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.1, // Makes lines slightly curved
+                    pointRadius: 0, // No points on the lines
+                });
+            }
+
+            // Dataset for the vertical theta line
+            datasets.push({
+                id: 'thetaLine',
+                type: 'line',
+                label: 'Current Theta (θ)',
+                data: [], // To be filled by updateChart
+                borderColor: 'rgba(239, 68, 68, 1)', // Tailwind red-500
+                borderWidth: 2,
+                fill: false,
+                pointRadius: 0,
+                borderDash: [5, 5], // Dashed line
+            });
+
+            chart = new Chart(ctx, {
+                type: 'line', // Base type, but P(Cat) are area-like due to fill:true
+                data: {
+                    labels: [], // Theta values
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            title: {
+                                display: true,
+                                text: 'Theta (θ) - Trait Level',
+                                font: { size: 14, weight: 'bold' }
+                            },
+                            min: THETA_MIN_PLOT,
+                            max: THETA_MAX_PLOT,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'Probability P(Category k | θ)',
+                                font: { size: 14, weight: 'bold' }
+                            },
+                            min: 0,
+                            max: 1,
+                            ticks: {
+                                stepSize: 0.1
+                            }
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.parsed.y !== null) {
+                                        label += context.parsed.y.toFixed(3);
+                                    }
+                                    return label;
+                                }
+                            }
+                        },
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                font: { size: 12 }
+                            }
+                        },
+                        title: {
+                            display: true,
+                            text: 'Category Response Curves',
+                            font: { size: 18, weight: 'bold' },
+                            padding: { top: 10, bottom: 20 }
+                        }
+                    },
+                    interaction: {
+                        mode: 'index', // Show tooltips for all datasets at the hovered x-value
+                        intersect: false
+                    },
+                    elements: {
+                        line: {
+                            tension: 0.4 // Smoother lines for category probabilities
+                        }
+                    }
+                }
+            });
+
+            updateChart(); // Initial population of chart and values
+        }
+
+        // --- Initialize ---
+        document.addEventListener('DOMContentLoaded', initializeChart);
+
+    </script>
+</body>
+</html>
