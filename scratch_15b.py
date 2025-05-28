@@ -583,12 +583,12 @@ model {
   to_vector(z) ~ std_normal();
 
   // Hierarchical priors for theta distribution (means and standard deviations of capabilities)
-  mu ~ normal(0, 1);        // Prior for overall mean of each capability dimension.
+  mu ~ normal(0, 1);      // Prior for overall mean of each capability dimension.
                           // Assumes capabilities are centered around 0 on latent scale.
                           // Sensitivity Check: normal(0, 0.5) or normal(0, 2)
                           // Consider also student_t(7, 0, 1), and perhaps parameterize nu>=1 as an integer
 
-  sigma ~ normal(0, 1);     // Prior for variability of each capability across teams/years.
+  sigma ~ normal(0, 1);   // Prior for variability of each capability across teams/years.
                           // Constrained positive. normal(0,1) is weakly informative.
                           // Sensitivity Check 1: sigma ~ cauchy(0, 2.5); // Heavier tails
                           // Sensitivity Check 2: sigma ~ exponential(1); // Mean 1
@@ -600,7 +600,7 @@ model {
                                   // Sensitivity Check 2: L_Omega ~ lkj_corr_cholesky(4); // Stronger push towards zero correlation
 
   // Priors for question parameters
-  a ~ lognormal(0, 0.5);    // Prior for discrimination 'a'. Must be positive.
+  a ~ lognormal(0, 0.5);  // Prior for discrimination 'a'. Must be positive.
                           // lognormal(0, 0.5) keeps most values moderate (e.g., 0.5-2.0).
                           // Sensitivity Check 1: a ~ lognormal(0, 1);   // More variable 'a' allowed
                           // Sensitivity Check 2: a ~ normal(0, 1); // Actually half-normal - alternative positive prior
@@ -620,10 +620,10 @@ model {
     int current_q;       // Index for the question (1..K)
     int current_g;       // Index for the group (team-year) (1..J)
     int current_dim;     // Index for the latent dimension this question measures (1..L)
-    real eta;             // Linear predictor for the ordered logistic model
+    real eta;            // Linear predictor for the ordered logistic model
 
-    current_q = q_idx[n];       // Which question? (1..K)
-    current_g = group_idx[n];   // Which group (team-year)? (1..J)
+    current_q = q_idx[n];                           // Which question? (1..K)
+    current_g = group_idx[n];                       // Which group (team-year)? (1..J)
     current_dim = question_to_dimension[current_q]; // Which dimension does this question load on? (1..L)
 
     // Calculate linear predictor: eta = discrimination * team_capability
