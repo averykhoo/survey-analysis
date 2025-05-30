@@ -1,0 +1,66 @@
+df_extra_long = df_raw[df_raw['year']==2025].melt(
+    id_vars=['I am from'], # Corrected
+    value_vars=[q for questions in category_mapping_initial.values() for q in questions],
+    var_name='question',
+    value_name='response',
+)
+df_extra_long['question_category'] = df_extra_long['question'].apply(lambda q: [c for c,qs in category_mapping_initial.items() if q in qs][0])
+
+for team in df_raw[df_raw['year']==2025]['I am from'].dropna().unique(): # Corrected
+    print(team)
+    df_long = df_extra_long[df_extra_long['I am from'] == team] # Corrected
+
+    counts = df_long.groupby(['question_category', 'response']).size().unstack(fill_value=0)
+    percentages = counts.div(counts.sum(axis=1), axis=0) * 100
+
+    # get this from the team rankings, then reorder the teams to match
+    # Note: The structure of df_category_scores line below is still somewhat unusual.
+    # If theta_df is a DataFrame, theta_df['category'] is a Series.
+    # It's more likely intended to be a list of column names.
+    df_category_scores = pd.DataFrame({theta: df_overall[df_overall['I am from']==team][theta_df['category'] for category in category_mapping_initial]}) # Corrected 'I am from'
+    order = [x for x in df_category_scores.transpose().loc[:, 0].sort_values().index] # worst to best -> bottom to top
+    order = [x for x in order if x not in percentages.index if x ] + [x for x in order if x in percentages.index if x]
+
+    # remove non-engg groups
+    # order = [x for x in order if x not in engg_only_question_categories]
+    percentages = percentages.reindex(order)
+    percentages.index = [cluster.title() for cluster in percentages.index]
+
+    # match likert values, in ordercounts
+    percentages = percentages.reindex(columns=RESPONSE_OPTIONS[::-1])
+
+    # plot
+    fig, ax = plt.subplots(figsize=(10.2 + len(order) / 2))
+    percentages.plot(
+        kind='barh',
+        stacked=True,
+        color=plt.cm.get_cmap('viridis_r', 6)(range(6)),
+        edgecolor='white',
+        ax=ax
+    )
+    ax.set_title(f'{team} ({2025})\n\n')
+    ax.set_xlabel('Percentage')
+    ax.set_xlim([0, 100])
+
+    ax.legend(RESPONSE_OPTIONS[::-1],
+              title='Rating', bbox_to_anchor=(0.5, 1.03),
+              loc='upper center',
+              ncol=len(RESPONSE_OPTIONS),
+              frameon=False,
+    )
+    for i, row in enumerate(percentages.values):
+        start = 0
+        for j, val in zip(RESPONSE_OPTIONS[::-1], row):
+            if val > 3.5:
+                ax.text(start + val/2,
+                        i,
+                        f'{val:.0f}%',
+                        va='center',
+                        ha='center',
+                        color='white' if j in (1,6) else 'black',
+                        #fontsize=10,
+                )
+            start += val
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTPUT_DIR, f'{team}-{team.replace(" ","_")}.likert.svg'))
+    plt.show()
