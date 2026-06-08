@@ -7,3 +7,6 @@ pymc>=5.0.0
 pytensor
 scipy
 seaborn
+
+fastprogress
+numba

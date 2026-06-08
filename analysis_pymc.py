@@ -15,6 +15,14 @@ import os
 import re
 import warnings
 
+# --- PyCharm Terminal & Progress Bar Compatibility Fixes ---
+from fastprogress import fastprogress
+fastprogress.printing = lambda: True  # Force raw text progress lines in PyCharm
+
+import pytensor
+pytensor.config.mode = "NUMBA"       # Bypasses slow C++ compiler compilation on local machines
+pytensor.config.cxx = ""             # Disables standard C-compilation warnings
+
 import arviz as az
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
@@ -33,6 +41,9 @@ ITER_WARMUP = 1000
 ITER_SAMPLING = 1500
 CHAINS = 4
 RANDOM_SEED = 42
+
+# --- Performance Setting ---
+USE_GPU = False  # Set to True in production to run on GPU via JAX/NumPyro
 
 # --- Diagnostic Thresholds ---
 RHAT_THRESHOLD = 1.05
@@ -94,7 +105,8 @@ for child, parents in REORG_MAPPING_Y_LAST_TO_Y1.items():
 def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_resp_per_team_year, category_map_sim,
                              response_options_sim):
     """
-    Generates simulated DORA survey data reflecting transitions over 3 years.
+    Generates simulated DORA survey data reflecting transitions over 3 years,
+    complete with department metadata.
     """
     print("--- Section 1: Simulating Sample DORA Data with Reorg ---")
     year1, year2, year3 = sim_years_reorg[0], sim_years_reorg[1], sim_years_reorg[2]
@@ -103,7 +115,23 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
     year2_teams_sim = sorted(list(set(p for parents in reorg_map_child_to_parents.values() for p in parents)))
     year3_teams_sim = sorted(list(reorg_map_child_to_parents.keys()))
 
-    np.random.seed(RANDOM_SEED)
+    # Establish department mappings for demographics
+    team_to_dept = {
+        'Team_A': 'Engineering',
+        'Team_B': 'Engineering',
+        'Team_X': 'Engineering',
+        'Team_Y': 'Engineering',
+        'Team_C': 'Product',
+        'Team_D': 'Product',
+        'Team_Z': 'Product',
+        'Team_E': 'Operations',
+        'Team_F': 'Operations',
+        'Team_G': 'Marketing'
+    }
+
+    # Use modern NumPy random generator
+    rng = np.random.default_rng(RANDOM_SEED)
+
     n_cats_response_sim = len(response_options_sim)
     n_latent_sim = len(category_map_sim)
     questions_sim = [q for qs in category_map_sim.values() for q in qs]
@@ -112,23 +140,23 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
     base_corr = 0.4
     corr_matrix = np.ones((n_latent_sim, n_latent_sim)) * base_corr
     np.fill_diagonal(corr_matrix, 1.0)
-    noise = np.random.uniform(-0.2, 0.2, (n_latent_sim, n_latent_sim))
+    noise = rng.uniform(-0.2, 0.2, (n_latent_sim, n_latent_sim))
     noise = (noise + noise.T) / 2
     np.fill_diagonal(noise, 0.0)
     true_Omega = np.clip(corr_matrix + noise, 0.05, 0.95)
     np.fill_diagonal(true_Omega, 1.0)
 
-    true_mu = np.random.normal(0, 0.2, n_latent_sim)
-    true_sigma = np.random.lognormal(-0.5, 0.2, n_latent_sim)
+    true_mu = rng.normal(0, 0.2, n_latent_sim)
+    true_sigma = rng.lognormal(-0.5, 0.2, n_latent_sim)
     cov_matrix = np.diag(true_sigma) @ true_Omega @ np.diag(true_sigma)
 
     def generate_correlated_traits(mean_vector, cov_matrix):
-        return np.random.multivariate_normal(mean_vector, cov_matrix)
+        return rng.multivariate_normal(mean_vector, cov_matrix)
 
     true_latent_y1 = {}
     latent_for_resp = {}
     for team in year1_teams_sim:
-        team_base_mean_offset = np.random.normal(0, 0.4)
+        team_base_mean_offset = rng.normal(0, 0.4)
         mean_vector = true_mu + team_base_mean_offset
         traits_y1 = generate_correlated_traits(mean_vector, cov_matrix)
         true_latent_y1[team] = traits_y1
@@ -138,7 +166,7 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
     true_latent_y2 = {}
     for team in year2_teams_sim:
         y1_traits = true_latent_y1.get(team, true_mu)
-        improvements = np.random.normal(0.2, 0.1, n_latent_sim)
+        improvements = rng.normal(0.2, 0.1, n_latent_sim)
         traits_y2 = y1_traits + improvements
         true_latent_y2[team] = traits_y2
         for cat_idx in range(1, n_latent_sim + 1):
@@ -148,19 +176,19 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
     for child_team in year3_teams_sim:
         parent_teams = reorg_map_child_to_parents.get(child_team, [])
         if not parent_teams:
-            team_base_mean_offset = np.random.normal(0, 0.4)
+            team_base_mean_offset = rng.normal(0, 0.4)
             mean_vector = true_mu + team_base_mean_offset
             traits_y3 = generate_correlated_traits(mean_vector, cov_matrix)
         else:
             parent_thetas = [true_latent_y2.get(p_team) for p_team in parent_teams if p_team in true_latent_y2]
             if not parent_thetas:
-                team_base_mean_offset = np.random.normal(0, 0.4)
+                team_base_mean_offset = rng.normal(0, 0.4)
                 mean_vector = true_mu + team_base_mean_offset
                 traits_y3 = generate_correlated_traits(mean_vector, cov_matrix)
             else:
                 avg_parent_theta = np.mean(np.array(parent_thetas), axis=0)
                 category_improvement_mean = 0.3
-                improvements = np.random.normal(category_improvement_mean, 0.2, n_latent_sim)
+                improvements = rng.normal(category_improvement_mean, 0.2, n_latent_sim)
                 traits_y3 = avg_parent_theta + improvements
         true_latent_y3[child_team] = traits_y3
         for cat_idx in range(1, n_latent_sim + 1):
@@ -170,12 +198,12 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
     true_latent_combined.update({(team, year2): traits for team, traits in true_latent_y2.items()})
     true_latent_combined.update({(team, year3): traits for team, traits in true_latent_y3.items()})
 
-    true_a = {q: np.random.lognormal(-0.1, 0.4) for q in questions_sim}
+    true_a = {q: rng.lognormal(-0.1, 0.4) for q in questions_sim}
     true_cutpoints = {}
     for q in questions_sim:
-        item_difficulty = np.random.normal(0, 0.7)
+        item_difficulty = rng.normal(0, 0.7)
         num_cutpoints = n_cats_response_sim - 1
-        spacings = np.maximum(np.random.lognormal(0, 0.3, num_cutpoints), 0.3)
+        spacings = np.maximum(rng.lognormal(0, 0.3, num_cutpoints), 0.3)
         raw_cutpoints = np.cumsum(spacings)
         centered_cutpoints = raw_cutpoints - np.mean(raw_cutpoints) + item_difficulty
         true_cutpoints[q] = np.sort(centered_cutpoints)
@@ -191,7 +219,7 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
         probs[n_cats_sim - 1] = 1.0 - cum_prob_le[n_cats_sim - 2]
         probs = np.maximum(probs, 1e-9)
         probs /= probs.sum()
-        return np.random.choice(response_options_sim, p=probs)
+        return rng.choice(response_options_sim, p=probs)
 
     data = []
     for year in sim_years_reorg:
@@ -207,7 +235,7 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
                 continue
 
             for i in range(sim_n_resp_per_team_year):
-                row = {YEAR_COL: year, ID_VAR: team}
+                row = {YEAR_COL: year, ID_VAR: team, 'dept': team_to_dept.get(team, 'Other')}
                 for q in questions_sim:
                     cat = question_categories_sim[q]
                     theta_key = (team, year, cat)
@@ -218,7 +246,7 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
 
                         if year in [year1, year2] and q in ['q14', 'q15', 'q16']:
                             row[q] = np.nan
-                        elif np.random.rand() < 0.05:
+                        elif rng.random() < 0.05:
                             row[q] = np.nan
                         else:
                             row[q] = simulate_response_gr(theta_true, a_val, cp_val, response_options_sim)
@@ -227,8 +255,14 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
                 data.append(row)
 
     df = pd.DataFrame(data)
-    true_params = {'true_a':      true_a, 'true_cutpoints': true_cutpoints, 'true_Omega': true_Omega,
-                   'true_latent': true_latent_combined, 'true_mu': true_mu, 'true_sigma': true_sigma}
+    true_params = {
+        'true_a':
+                       true_a, 'true_cutpoints': true_cutpoints,
+        'true_Omega':  true_Omega,
+        'true_latent': true_latent_combined,
+        'true_mu':     true_mu,
+        'true_sigma':  true_sigma,
+    }
     return df, true_params
 
 
@@ -236,12 +270,23 @@ def filename_escape(text):
     return re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
 
 
-def plot_reorg_slope_chart_standardized_internal(theta_df_viz, category_name_viz, id_var_viz, year_col_viz, years_viz,
-                                                 mu_map_viz, sigma_map_viz, parent_to_child_map, output_dir_viz):
+def plot_reorg_slope_chart_standardized_internal(theta_df_viz,
+                                                 category_name_viz,
+                                                 id_var_viz,
+                                                 year_col_viz,
+                                                 years_viz,
+                                                 mu_map_viz,
+                                                 sigma_map_viz,
+                                                 parent_to_child_map,
+                                                 output_dir_viz,
+                                                 target_dept=None):
+    if target_dept is not None:
+        theta_df_viz = theta_df_viz[theta_df_viz['dept'] == target_dept]
+
     pop_mean = mu_map_viz.get(category_name_viz)
     pop_sd = sigma_map_viz.get(category_name_viz)
 
-    if pop_mean is None or pop_sd is None or pop_sd <= 1e-6:
+    if pop_mean is None or pop_sd is None or pop_sd <= 1e-6 or theta_df_viz.empty:
         return
 
     raw_col_name = f"theta_{category_name_viz}"
@@ -289,7 +334,9 @@ def plot_reorg_slope_chart_standardized_internal(theta_df_viz, category_name_viz
 
     adjust_text(texts, ax=ax, force_points=(0.2, 0.3), arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
 
-    ax.set_title(f'Standardized Capability Evolution: {category_name_viz} ({year1} vs {year2})', fontsize=14)
+    title_suffix = f" - {target_dept}" if target_dept else ""
+    ax.set_title(f'Standardized Capability Evolution: {category_name_viz} ({year1} vs {year2}){title_suffix}',
+                 fontsize=14)
     ax.set_xlabel('Year', fontsize=12)
     ax.set_ylabel(f'Capability Z-Score (Std. Devs from Mean)', fontsize=12)
     ax.set_xticks([year1, year2])
@@ -321,8 +368,19 @@ def plot_omega_clustermap(corr_df_viz, output_dir_viz):
         print(f"WARNING: Clustermap generation failed: {e}")
 
 
-def plot_likert_response_distributions(df_raw, theta_df, category_mapping, response_options, id_var, year_col,
-                                       target_year, output_dir):
+def plot_likert_response_distributions(df_raw,
+                                       theta_df,
+                                       category_mapping,
+                                       response_options,
+                                       id_var,
+                                       year_col,
+                                       target_year,
+                                       output_dir,
+                                       target_dept=None):
+    if target_dept is not None:
+        theta_df = theta_df[theta_df['dept'] == target_dept]
+        df_raw = df_raw[df_raw['dept'] == target_dept]
+
     df_overall_year = theta_df[theta_df[year_col] == target_year]
     df_raw_year = df_raw[df_raw[year_col] == target_year]
 
@@ -333,8 +391,11 @@ def plot_likert_response_distributions(df_raw, theta_df, category_mapping, respo
     colors = [cmap(i) for i in range(len(response_options))]
 
     for category, questions in category_mapping.items():
-        df_long_cat = df_raw_year.melt(id_vars=[id_var], value_vars=questions, var_name='question',
-                                       value_name='response').dropna()
+        df_long_cat = df_raw_year.melt(id_vars=[id_var],
+                                       value_vars=questions,
+                                       var_name='question',
+                                       value_name='response',
+                                       ).dropna()
         if df_long_cat.empty:
             continue
 
@@ -358,8 +419,9 @@ def plot_likert_response_distributions(df_raw, theta_df, category_mapping, respo
         fig, ax = plt.subplots(figsize=(11, fig_height))
         plot_df.plot(kind='barh', stacked=True, color=colors[::-1], edgecolor='white', linewidth=0.5, ax=ax)
 
-        ax.set_title(f"{category} ({target_year})\nTeam Response Distribution (Sorted by Rank)\n", fontsize=13,
-                     weight='bold')
+        title_suffix = f" - {target_dept}" if target_dept else ""
+        ax.set_title(f"{category} ({target_year}){title_suffix}\nTeam Response Distribution (Sorted by Rank)\n",
+                     fontsize=13, weight='bold')
         ax.set_xlabel('Percentage of Responses', fontsize=11)
         ax.set_ylabel('Team (Capability Rank - Bottom to Top)', fontsize=11)
         ax.set_xlim([0, 100])
@@ -381,19 +443,132 @@ def plot_likert_response_distributions(df_raw, theta_df, category_mapping, respo
         plt.close(fig)
 
 
+def plot_team_ridge_plots(idata, theta_df, category_name, output_dir, target_dept=None):
+    """
+    Plots the posterior distribution of capability scores (theta) over years
+    as stacked ridge plots for each team, matching the requested aesthetic.
+    """
+    if target_dept is not None:
+        theta_df = theta_df[theta_df['dept'] == target_dept]
+
+    if theta_df.empty:
+        return
+
+    # Extract posterior samples of theta: (samples, J, L)
+    theta_samples = idata.posterior['theta'].stack(samples=['chain', 'draw']).values
+    theta_samples = theta_samples.transpose(2, 0, 1)
+
+    cat_names = list(CATEGORY_MAPPING_INITIAL.keys())
+    if category_name not in cat_names:
+        return
+    cat_idx = cat_names.index(category_name)
+
+    unique_teams = sorted(theta_df[ID_VAR].unique())
+    unique_years = sorted(theta_df[YEAR_COL].unique())
+    num_teams = len(unique_teams)
+
+    fig, axes = plt.subplots(num_teams, 1, figsize=(14, 2.8 * num_teams), sharex=True)
+    if num_teams == 1:
+        axes = [axes]
+
+    palette = sns.color_palette("muted", num_teams)
+
+    for i, team in enumerate(unique_teams):
+        ax = axes[i]
+        team_color = palette[i % len(palette)]
+
+        # Draw baseline axis (dotted blue line)
+        ax.axhline(0, color='#1f4e78', linestyle=':', lw=1.5, zorder=0)
+
+        # Plot density curves for each year
+        for year in unique_years:
+            grp_rows = theta_df[(theta_df[ID_VAR] == team) & (theta_df[YEAR_COL] == year)]
+            if grp_rows.empty:
+                continue
+            grp_idx = grp_rows['group_idx'].values[0] - 1  # 0-based for python index
+
+            samples = theta_samples[:, grp_idx, cat_idx]
+
+            # Standard KDE configuration
+            alpha_val = 0.85 if year == unique_years[-1] else 0.35
+            style_val = '-' if year == unique_years[-1] else '--'
+
+            # Obtain KDE curve coordinates
+            kde_plot = sns.kdeplot(samples,
+                                   ax=ax,
+                                   color=team_color,
+                                   fill=True,
+                                   alpha=alpha_val,
+                                   linestyle=style_val,
+                                   warn_singular=False)
+            kde_x, kde_y = kde_plot.get_lines()[-1].get_data()
+
+            # Label the year inside the curve peak
+            peak_idx = np.argmax(kde_y)
+            ax.text(kde_x[peak_idx],
+                    kde_y[peak_idx] * 0.35,
+                    str(year),
+                    color='white' if alpha_val > 0.6 else 'black',
+                    weight='bold',
+                    ha='center',
+                    va='center',
+                    fontsize=10)
+
+        # Draw red vertical line at the latest year's posterior mean
+        latest_year = unique_years[-1]
+        latest_rows = theta_df[(theta_df[ID_VAR] == team) & (theta_df[YEAR_COL] == latest_year)]
+        if not latest_rows.empty:
+            latest_grp_idx = latest_rows['group_idx'].values[0] - 1
+            latest_mean = theta_samples[:, latest_grp_idx, cat_idx].mean()
+            ax.axvline(latest_mean, color='red', linestyle='-', lw=2, zorder=5)
+
+        # Labels & Aesthetics
+        ax.set_ylabel(team, rotation=0, ha='right', va='center', fontsize=12, weight='bold', labelpad=15)
+        ax.yaxis.set_ticks([])
+        ax.set_ylim(bottom=0)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_visible(False)
+        ax.spines['bottom'].set_visible(False)
+
+    # Global population baseline reference line (0)
+    for ax in axes:
+        ax.axvline(0, color='#1f4e78', linestyle='--', lw=1, zorder=1)
+
+    axes[0].text(0, axes[0].get_ylim()[1] * 1.15, "mean", ha='center', va='bottom', style='italic', fontsize=12)
+
+    plt.xlabel('Capability Score (Theta)', fontsize=12, labelpad=15)
+    plt.xlim(-3.5, 3.5)
+    plt.tight_layout()
+
+    suffix = f"_{target_dept.lower()}" if target_dept else ""
+    filepath = os.path.join(output_dir, f'ridge_plots_{filename_escape(category_name)}{suffix}.png')
+    plt.savefig(filepath, bbox_inches='tight')
+    plt.close()
+    print(f"  Saved team capability ridge plots to {filepath}")
+
+
 def run_diagnostic_checks(idata, df_long, cat_idx_to_name_map, question_idx_map):
     print("\n--- RUNNING DIAGNOSTIC CHECKS ---")
     warnings_found = []
 
-    # Divergences
-    divergences = idata.sample_stats.diverging.sum().item()
-    if divergences > 0:
-        msg = f"CRITICAL WARNING: {divergences} divergent transitions found! Review parametrization."
-        warnings_found.append(msg)
-        print(msg)
-    else:
-        print("  Divergences: OK (0 found)")
+    # 1. Check for groups with low response counts
+    responses_per_group = df_long.groupby('group').size()
+    low_groups = responses_per_group[responses_per_group < MIN_RESPONSES_PER_GROUP]
+    for g, sz in low_groups.items():
+        warnings_found.append(
+            f"WARNING: Group '{g}' has only {sz} responses (minimum threshold is {MIN_RESPONSES_PER_GROUP}).")
 
+    # 2. Check for Divergences
+    if hasattr(idata, "sample_stats") and "diverging" in idata.sample_stats.data_vars:
+        divergences = idata.sample_stats.diverging.sum().item()
+        if divergences > 0:
+            msg = f"CRITICAL WARNING: {divergences} divergent transitions found! Review parametrization."
+            warnings_found.append(msg)
+        else:
+            print("  Divergences: OK (0 found)")
+
+    # 3. Check Convergence Statistics
     summary = az.summary(idata, var_names=["mu", "sigma", "a"], round_to=3)
 
     max_rhat = summary['r_hat'].max()
@@ -406,9 +581,20 @@ def run_diagnostic_checks(idata, df_long, cat_idx_to_name_map, question_idx_map)
     min_ess = summary['ess_bulk'].min()
     print(f"  Min ESS (bulk) observed: {min_ess:.1f}")
     if min_ess < (NEFF_RATIO_THRESHOLD * ITER_SAMPLING * CHAINS):
-        msg = "WARNING: Low effective sample size detected."
+        msg = f"WARNING: Low effective sample size detected (ESS < {NEFF_RATIO_THRESHOLD * ITER_SAMPLING * CHAINS:.0f})."
         warnings_found.append(msg)
-        print(msg)
+
+    # 4. Check for Low Discrimination Items
+    idx_to_question = {v: k for k, v in question_idx_map.items()}
+    a_summary = summary[summary.index.str.startswith("a")]
+    for idx_str, row in a_summary.iterrows():
+        match = re.search(r"a\[(\d+)\]", idx_str)
+        if match:
+            q_idx = int(match.group(1))
+            q_name = idx_to_question.get(q_idx, f"Idx {q_idx}")
+            mean_a = row['mean']
+            if mean_a < LOW_DISCRIMINATION_THRESHOLD:
+                warnings_found.append(f"WARNING: Question '{q_name}' has low mean discrimination of {mean_a:.3f}.")
 
     return warnings_found
 
@@ -439,10 +625,14 @@ def create_ranking_summary(theta_df_in, id_var_in, year_col_in, cat_map_in, year
             rank_change = r_y1 - r_y_last if pd.notna(r_y1) and pd.notna(r_y_last) else np.nan
 
             summary_data.append({
-                'Team':                team_id, 'Category': cat_name,
-                f'Capability_{year1}': val_y1, f'Capability_{year_last}': val_y_last,
-                'Improvement':         improvement, f'Rank_{year1}': r_y1, f'Rank_{year_last}': r_y_last,
-                'Rank_Change':         rank_change
+                'Team':                    team_id,
+                'Category':                cat_name,
+                f'Capability_{year1}':     val_y1,
+                f'Capability_{year_last}': val_y_last,
+                'Improvement':             improvement,
+                f'Rank_{year1}':           r_y1,
+                f'Rank_{year_last}':       r_y_last,
+                'Rank_Change':             rank_change
             })
     return pd.DataFrame(summary_data)
 
@@ -518,7 +708,7 @@ def main():
     cat_idx_to_name_final = {idx: name for idx, name in enumerate(final_cat_names)}
     N_LATENT_final = len(category_mapping_final)
 
-    df_long = df_raw.melt(id_vars=[YEAR_COL, ID_VAR], value_vars=questions_to_use, var_name='question',
+    df_long = df_raw.melt(id_vars=[YEAR_COL, ID_VAR, 'dept'], value_vars=questions_to_use, var_name='question',
                           value_name='response')
     df_long.dropna(subset=['response'], inplace=True)
 
@@ -557,7 +747,7 @@ def main():
     with pm.Model() as dora_mgrm_model:
         z = pm.Normal("z", mu=0, sigma=1, shape=(L_final, J_final))
 
-        # Unpacked Cholesky correlation mapping directly
+        # Unpacked Cholesky LKJ Covariance modeling directly
         chol_cov, corr, sigma_val = pm.LKJCholeskyCov(
             "chol_cov", n=L_final, eta=2.0, sd_dist=pm.HalfNormal.dist(1.0)
         )
@@ -591,59 +781,139 @@ def main():
             observed=df_long['response'].values - 1
         )
 
+    # --- Save PyMC Model Directed Graph ---
+    try:
+        g = pm.model_to_graphviz(dora_mgrm_model)
+        g.render(filename=os.path.join(OUTPUT_DIR, 'model_dag'), format='png', cleanup=True)
+        print("Saved model DAG visualization to model_dag.png")
+    except Exception as e:
+        print(f"Skipped Graphviz model visualization (install Graphviz for this feature): {e}")
+
     # --- Section 4: Running PyMC Sampler ---
     print("\n--- Section 4: Running PyMC Sampler ---")
-    with dora_mgrm_model:
-        idata = pm.sample(
-            draws=ITER_SAMPLING,
-            tune=ITER_WARMUP,
-            chains=CHAINS,
-            random_seed=RANDOM_SEED,
-            target_accept=0.85,
-            init="jitter+adapt_diag"
-        )
+    if USE_GPU:
+        try:
+            import pymc.sampling.jax as pm_jax
+            print("Sampling using JAX (NumPyro) on GPU...")
+            with dora_mgrm_model:
+                idata = pm_jax.sample_numpyro(
+                    draws=ITER_SAMPLING,
+                    tune=ITER_WARMUP,
+                    chains=CHAINS,
+                    random_seed=RANDOM_SEED,
+                    target_accept=0.85
+                )
+        except ImportError as e:
+            warnings.warn(f"WARNING: JAX/NumPyro installation not found. Falling back to CPU sampling. Error: {e}")
+            with dora_mgrm_model:
+                idata = pm.sample(
+                    draws=ITER_SAMPLING,
+                    tune=ITER_WARMUP,
+                    chains=CHAINS,
+                    random_seed=RANDOM_SEED,
+                    target_accept=0.85,
+                    init="jitter+adapt_diag"
+                )
+    else:
+        with dora_mgrm_model:
+            idata = pm.sample(
+                draws=ITER_SAMPLING,
+                tune=ITER_WARMUP,
+                chains=CHAINS,
+                random_seed=RANDOM_SEED,
+                target_accept=0.85,
+                init="jitter+adapt_diag"
+            )
 
     # --- Section 5: Run Diagnostics ---
     diagnostic_warnings = run_diagnostic_checks(idata, df_long, cat_idx_to_name_final, question_idx_map)
 
-    # --- Section 6: Extract and Save Results ---
+    # --- Section 6: Extract and Save Results (Including Credible Intervals) ---
     print("\n--- Section 6: Extracting and Processing Results ---")
-    posterior_means = idata.posterior.mean(dim=["chain", "draw"])
 
+    # Calculate HDI intervals (95% default)
+    hdis = az.hdi(idata, hdi_prob=0.95)
+
+    posterior_means = idata.posterior.mean(dim=["chain", "draw"])
+    category_names_final = list(cat_idx_to_name_final.values())
+
+    # 1. mu parameter extraction
+    mu_means = posterior_means["mu"].values.flatten()
+    mu_hdi_lower = hdis["mu"].values[:, 0, 0]  # Extract first sub-array index for shapes
+    mu_hdi_upper = hdis["mu"].values[:, 0, 1]
+
+    mu_summary_df = pd.DataFrame({
+        "Category":     category_names_final,
+        "mu_mean":      mu_means,
+        "mu_hdi_lower": mu_hdi_lower,
+        "mu_hdi_upper": mu_hdi_upper
+    })
+    mu_summary_df.to_csv(os.path.join(OUTPUT_DIR, "mu_parameter_estimates.csv"), index=False)
+
+    # 2. sigma parameter extraction
+    sigma_means_val = posterior_means["sigma"].values.flatten()
+    sigma_hdi_lower = hdis["sigma"].values[:, 0]
+    sigma_hdi_upper = hdis["sigma"].values[:, 1]
+
+    sigma_summary_df = pd.DataFrame({
+        "Category":        category_names_final,
+        "sigma_mean":      sigma_means_val,
+        "sigma_hdi_lower": sigma_hdi_lower,
+        "sigma_hdi_upper": sigma_hdi_upper
+    })
+    sigma_summary_df.to_csv(os.path.join(OUTPUT_DIR, "sigma_parameter_estimates.csv"), index=False)
+
+    # 3. theta capability scores extraction with lower/upper HDI
     theta_means = posterior_means["theta"].values
-    theta_columns = [f"theta_{cat_idx_to_name_final[l]}" for l in range(L_final)]
+    theta_hdis = hdis["theta"].values  # Shape: (J, L, 2)
+
+    theta_columns = [f"theta_{cat}" for cat in category_names_final]
     theta_df_out = pd.DataFrame(theta_means, columns=theta_columns)
+
+    # Append low/high hdi boundaries
+    for l_idx, cat in enumerate(category_names_final):
+        theta_df_out[f"theta_{cat}_hdi_lower"] = theta_hdis[:, l_idx, 0]
+        theta_df_out[f"theta_{cat}_hdi_upper"] = theta_hdis[:, l_idx, 1]
 
     theta_df_out['group_idx'] = list(group_idx_map.values())
     theta_df_out['group'] = theta_df_out['group_idx'].map({v: k for k, v in group_idx_map.items()})
     theta_df_out[[ID_VAR, YEAR_COL]] = theta_df_out['group'].str.split('|', expand=True)
     theta_df_out[YEAR_COL] = theta_df_out[YEAR_COL].astype(int)
-    theta_df_out = theta_df_out[[ID_VAR, YEAR_COL, 'group', 'group_idx'] + theta_columns]
 
+    # Map departments for demographic visual filtering
+    team_to_dept_map = df_raw[[ID_VAR, 'dept']].drop_duplicates().set_index(ID_VAR)['dept'].to_dict()
+    theta_df_out['dept'] = theta_df_out[ID_VAR].map(team_to_dept_map)
+
+    # Structure column order
+    ordered_cols = [ID_VAR, YEAR_COL, 'dept', 'group', 'group_idx'] + theta_columns
+    for cat in category_names_final:
+        ordered_cols.extend([f"theta_{cat}_hdi_lower", f"theta_{cat}_hdi_upper"])
+    theta_df_out = theta_df_out[ordered_cols]
+
+    # Perform response-presence masking to prevent imputed parameters showing up for unasked categories
     for group in theta_df_out['group']:
         _id_var, _year = group.split('|')
         _year = int(_year)
-        for theta_column in theta_columns:
-            cat_name = theta_column[6:]
-            questions_in_category = category_mapping_final.get(cat_name, [])
+        for cat in category_names_final:
+            questions_in_category = category_mapping_final.get(cat, [])
             raw_subset = df_raw[(df_raw[ID_VAR] == _id_var) & (df_raw[YEAR_COL] == _year)][questions_in_category]
             if raw_subset.dropna(how='all').empty:
-                theta_df_out.loc[(theta_df_out['group'] == group), theta_column] = float('nan')
+                theta_df_out.loc[(theta_df_out['group'] == group), f"theta_{cat}"] = float('nan')
+                theta_df_out.loc[(theta_df_out['group'] == group), f"theta_{cat}_hdi_lower"] = float('nan')
+                theta_df_out.loc[(theta_df_out['group'] == group), f"theta_{cat}_hdi_upper"] = float('nan')
 
     theta_filepath = os.path.join(OUTPUT_DIR, 'team_capability_estimates.csv')
     theta_df_out.to_csv(theta_filepath, index=False)
     print(f"Team capability estimates saved to {theta_filepath}")
 
+    # 4. Correlation Matrix
     Omega_mean_val = posterior_means["Omega"].values
-    category_names_final = list(cat_idx_to_name_final.values())
     corr_df_out = pd.DataFrame(Omega_mean_val, index=category_names_final, columns=category_names_final)
     corr_filepath = os.path.join(OUTPUT_DIR, 'capability_correlations.csv')
     corr_df_out.to_csv(corr_filepath)
     print(f"Capability correlation matrix saved to {corr_filepath}")
 
-    mu_means_val = posterior_means["mu"].values.flatten()
-    sigma_means_val = posterior_means["sigma"].values.flatten()
-    mu_map_for_plot = dict(zip(category_names_final, mu_means_val))
+    mu_map_for_plot = dict(zip(category_names_final, mu_means))
     sigma_map_for_plot = dict(zip(category_names_final, sigma_means_val))
 
     ranking_summary_df = create_ranking_summary(theta_df_out, ID_VAR, YEAR_COL, category_mapping_final, actual_years)
@@ -653,27 +923,70 @@ def main():
 
     # --- Section 8: Visualizations ---
     print("\n--- Section 8: Generating Visualizations ---")
+
+    # Example target filter: Focus on 'Engineering' department to demonstrate post-hoc demographics
+    demographic_filter = 'Engineering'
+
     if theta_df_out is not None:
         actual_years_final = sorted(theta_df_out[YEAR_COL].unique())
         if len(actual_years_final) >= 2:
             years_to_plot = [actual_years_final[0], actual_years_final[-1]]
             for cat_name in category_mapping_final.keys():
+                # Raw (unfiltered) Slope Charts
                 plot_reorg_slope_chart_standardized_internal(
                     theta_df_viz=theta_df_out, category_name_viz=cat_name,
                     id_var_viz=ID_VAR, year_col_viz=YEAR_COL, years_viz=years_to_plot,
                     mu_map_viz=mu_map_for_plot, sigma_map_viz=sigma_map_for_plot,
-                    parent_to_child_map=PARENT_TO_CHILD_MAPPING, output_dir_viz=OUTPUT_DIR
+                    parent_to_child_map=PARENT_TO_CHILD_MAPPING, output_dir_viz=OUTPUT_DIR,
+                    target_dept=None
                 )
 
-            plot_likert_response_distributions(
-                df_raw=df_raw, theta_df=theta_df_out,
-                category_mapping=category_mapping_final, response_options=RESPONSE_OPTIONS,
-                id_var=ID_VAR, year_col=YEAR_COL, target_year=actual_years_final[-1],
-                output_dir=OUTPUT_DIR
-            )
+                # Standardized Department-filtered Slope Charts
+                plot_reorg_slope_chart_standardized_internal(
+                    theta_df_viz=theta_df_out, category_name_viz=cat_name,
+                    id_var_viz=ID_VAR, year_col_viz=YEAR_COL, years_viz=years_to_plot,
+                    mu_map_viz=mu_map_for_plot, sigma_map_viz=sigma_map_for_plot,
+                    parent_to_child_map=PARENT_TO_CHILD_MAPPING, output_dir_viz=OUTPUT_DIR,
+                    target_dept=demographic_filter
+                )
+
+                # Raw Likert response distributions
+                plot_likert_response_distributions(
+                    df_raw=df_raw, theta_df=theta_df_out,
+                    category_mapping=category_mapping_final, response_options=RESPONSE_OPTIONS,
+                    id_var=ID_VAR, year_col=YEAR_COL, target_year=actual_years_final[-1],
+                    output_dir=OUTPUT_DIR, target_dept=None
+                )
+
+                # Standardized capability distribution ridge curves (Matching your visual template)
+                plot_team_ridge_plots(
+                    idata=idata, theta_df=theta_df_out,
+                    category_name=cat_name, output_dir=OUTPUT_DIR,
+                    target_dept=None
+                )
+
+                # Standardized capability distribution ridge curves (Department filtered)
+                plot_team_ridge_plots(
+                    idata=idata, theta_df=theta_df_out,
+                    category_name=cat_name, output_dir=OUTPUT_DIR,
+                    target_dept=demographic_filter
+                )
 
         if corr_df_out is not None:
             plot_omega_clustermap(corr_df_out, OUTPUT_DIR)
+
+    # Print a clean report of any warnings detected during Section 5 diagnostics
+    if diagnostic_warnings:
+        print("\n--- Diagnostic Warning Report ---")
+        for warning in diagnostic_warnings:
+            print(f"  * {warning}")
+
+        if any("CRITICAL" in w for w in diagnostic_warnings):
+            print("\n*** ACTION REQUIRED: Critical issues detected. Estimates may be unstable. ***")
+        else:
+            print("\nNote: Standard warnings detected. Review and adjust parameters as necessary.")
+    else:
+        print("\nNo diagnostics issues flagged. Model convergence appears stable.")
 
     print("\n--- Analysis Complete ---")
     print(f"Results, diagnostics, and plots saved in: {OUTPUT_DIR}")
