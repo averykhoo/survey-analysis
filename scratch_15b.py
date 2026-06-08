@@ -1283,7 +1283,8 @@ if 'theta' in samples:
         _id_var, _year = group.split('|')
         _year = int(_year)
         for theta_column in theta_columns:
-            if len(df_raw[(df_raw[ID_VAR] == _id_var) & (df_raw[YEAR_COL] == _year)][category_mapping_initial[theta_column[6:]]].dropna(how='all')) == 0:
+            if len(df_raw[(df_raw[ID_VAR] == _id_var) & (df_raw[YEAR_COL] == _year)][
+                       category_mapping_initial[theta_column[6:]]].dropna(how='all')) == 0:
                 theta_df.loc[(theta_df['group'] == group), theta_column] = float('nan')
 
     print("\nEstimated Team Capabilities (Theta Posterior Means):")
@@ -1410,6 +1411,142 @@ else:
 # Section 7: Visualization Functions
 # -----------------------------------------
 print("\n--- Section 7: Defining Visualization Functions ---")
+
+
+def plot_likert_response_distributions(df_raw, theta_df, category_mapping, response_options,
+                                       id_var, year_col, target_year, output_dir,
+                                       engg_only_categories=None, non_engg_teams=None):
+    """
+    Plots 100% stacked horizontal Likert charts for each category,
+    with teams ordered on the Y-axis by their latent trait score (theta)
+    for that category (highest score on top).
+    """
+    import os
+    import matplotlib.pyplot as plt
+
+    if theta_df is None or theta_df.empty:
+        print("Skipping Likert plots: theta_df is empty or None.")
+        return
+
+    # Filter data for target year
+    df_overall_year = theta_df[theta_df[year_col] == target_year]
+    df_raw_year = df_raw[df_raw[year_col] == target_year]
+
+    if df_overall_year.empty or df_raw_year.empty:
+        print(f"Skipping Likert plots: No data found for year {target_year}.")
+        return
+
+    # Set up diverging colormap matching the length of the response options scale
+    try:
+        cmap = plt.cm.get_cmap('vlag', len(response_options))
+        colors = [cmap(i) for i in range(len(response_options))]
+    except ValueError:
+        # Fallback colormap if 'vlag' is unavailable
+        cmap = plt.cm.get_cmap('coolwarm', len(response_options))
+        colors = [cmap(i) for i in range(len(response_options))]
+
+    for category, questions in category_mapping.items():
+        print(f"Plotting Likert distribution for category: {category}")
+
+        # Melt raw data for current category
+        df_long_cat = df_raw_year.melt(
+            id_vars=[id_var],
+            value_vars=questions,
+            var_name='question',
+            value_name='response'
+        ).dropna(subset=['response'])
+
+        if df_long_cat.empty:
+            print(f"  No response data for category '{category}' in {target_year}. Skipping.")
+            continue
+
+        # Clean responses and filter valid options
+        df_long_cat['response'] = pd.to_numeric(df_long_cat['response'], errors='coerce')
+        df_long_cat = df_long_cat[df_long_cat['response'].isin(response_options)]
+        df_long_cat['response'] = df_long_cat['response'].astype(int)
+
+        if df_long_cat.empty:
+            continue
+
+        # Calculate percentages per team
+        counts = df_long_cat.groupby([id_var, 'response']).size().unstack(fill_value=0)
+        percentages = counts.div(counts.sum(axis=1), axis=0) * 100
+
+        # Sort teams by their category score (theta)
+        theta_col = f"theta_{category}"
+        if theta_col in df_overall_year.columns:
+            # Sort ascending so the team with the highest capability ends up at the top of the horizontal bar chart
+            ordered_teams = df_overall_year.sort_values(by=theta_col, ascending=True)[id_var].tolist()
+        else:
+            ordered_teams = percentages.index.tolist()
+
+        # Build clean alignment order
+        final_order = [t for t in ordered_teams if t in percentages.index]
+        final_order.extend([t for t in percentages.index if t not in final_order])
+
+        # Apply engineering-only filters
+        if engg_only_categories and category in engg_only_categories and non_engg_teams:
+            final_order = [t for t in final_order if t not in non_engg_teams]
+
+        if not final_order:
+            print(f"  No teams left to plot for category '{category}' after filtering. Skipping.")
+            continue
+
+        # Reindex percentage columns and rows. Reverse columns [::-1] so positive responses are on the right
+        plot_df = percentages.reindex(index=final_order, columns=response_options[::-1], fill_value=0)
+
+        # Plot Setup
+        fig_height = max(5, len(plot_df) * 0.6)
+        fig, ax = plt.subplots(figsize=(11, fig_height))
+
+        plot_df.plot(
+            kind='barh',
+            stacked=True,
+            color=colors[::-1],
+            edgecolor='white',
+            linewidth=0.5,
+            ax=ax
+        )
+
+        ax.set_title(f"{category} ({target_year})\nTeam Response Distribution (Sorted by Latent Capability Rank)\n",
+                     fontsize=13, weight='bold')
+        ax.set_xlabel('Percentage of Responses', fontsize=11)
+        ax.set_ylabel('Team (Ascending Performance Rank)', fontsize=11)
+        ax.set_xlim([0, 100])
+
+        ax.legend(
+            response_options[::-1],
+            title='Response Scale',
+            loc='upper center',
+            bbox_to_anchor=(0.5, -0.15 if len(plot_df) > 8 else -0.2),
+            ncol=len(response_options),
+            frameon=False,
+            fontsize=10
+        )
+
+        # Add inline annotations inside bar segments
+        for idx, (team_name, row_values) in enumerate(plot_df.iterrows()):
+            start_pos = 0
+            for j, val in enumerate(row_values):
+                if val > 3.5:  # Only write labels for segments wide enough to contain text
+                    text_color = 'white' if j in (0, len(response_options) - 1) else 'black'
+                    ax.text(
+                        start_pos + val / 2,
+                        idx,
+                        f'{val:.0f}%',
+                        va='center',
+                        ha='center',
+                        color=text_color,
+                        fontsize=9
+                    )
+                start_pos += val
+
+        plt.tight_layout()
+        safe_cat_name = category.replace(" ", "_").replace("/", "_").lower()
+        filepath = os.path.join(output_dir, f'likert_dist_{safe_cat_name}.png')
+        plt.savefig(filepath, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  Saved Likert distribution plot to {filepath}")
 
 
 def filename_escape(text):
@@ -2017,6 +2154,24 @@ if 'a' in samples:
 
 else:
     print("INFO: 'a' not found in samples. Skipping all item-level plots based on discrimination.")
+
+# --- Generate Likert response distribution plots (aligned to theta ranks) ---
+# Define optional lists as per your survey context:
+eng_only = ['Deployment & Release', 'Monitoring & Observability', 'Technical Practices', 'System Reliability']
+non_eng_teams = ['Product Management', 'Design', 'Marketing']  # Replace with actual team names as needed
+
+plot_likert_response_distributions(
+    df_raw=df_raw,
+    theta_df=theta_df,
+    category_mapping=category_mapping_final,
+    response_options=RESPONSE_OPTIONS,
+    id_var=ID_VAR,
+    year_col=YEAR_COL,
+    target_year=actual_years_final[-1],  # Plot for the most recent year
+    output_dir=OUTPUT_DIR,
+    engg_only_categories=eng_only,
+    non_engg_teams=non_eng_teams
+)
 
 # --- Optional: Compare Estimated Parameters to True Simulation Parameters ---
 if RUN_SIMULATION and true_params is not None:
