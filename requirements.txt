@@ -3,6 +3,7 @@ arviz
 matplotlib
 numpy
 pandas
-pystan<3
+pymc>=5.0.0
+pytensor
 scipy
 seaborn
