@@ -10,18 +10,15 @@ Purpose: Analyze Likert-scale DORA survey responses using a Bayesian
          plots item-level diagnostics (ICC/KDE, CRF, IIF), Test Information (TIF)
          and performs rigorous diagnostic checks.
 """
-
-import os
-import re
-import warnings
-
 # --- PyCharm Terminal & Progress Bar Compatibility Fixes ---
 from fastprogress import fastprogress
+
 fastprogress.printing = lambda: True  # Force raw text progress lines in PyCharm
 
-import pytensor
-pytensor.config.mode = "NUMBA"       # Bypasses slow C++ compiler compilation on local machines
-pytensor.config.cxx = ""             # Disables standard C-compilation warnings
+# --- normal imports ---
+import datetime
+import os
+import re
 
 import arviz as az
 import matplotlib.cm as cm
@@ -33,17 +30,29 @@ import pytensor.tensor as pt
 import scipy.special as sps
 import seaborn as sns
 from adjustText import adjust_text
+import jax
 
 # -----------------------------------------
 # Global Constants & MCMC Settings
 # -----------------------------------------
+
+# numba mode does not work well with this model
+# pytensor.config.mode = "NUMBA"       # Bypasses slow C++ compiler compilation on local machines
+# pytensor.config.cxx = ""             # Disables standard C-compilation warnings
+
+T_START = datetime.datetime.now()
+
 ITER_WARMUP = 1000
 ITER_SAMPLING = 1500
 CHAINS = 4
 RANDOM_SEED = 42
 
 # --- Performance Setting ---
-USE_GPU = False  # Set to True in production to run on GPU via JAX/NumPyro
+# Verify if JAX detects an active GPU (CUDA)
+try:
+    GPU_DETECTED = len(jax.devices("gpu")) > 0 if hasattr(jax, "devices") else False
+except RuntimeError:
+    GPU_DETECTED = False
 
 # --- Diagnostic Thresholds ---
 RHAT_THRESHOLD = 1.05
@@ -86,12 +95,12 @@ REORG_MAPPING_Y_LAST_TO_Y1 = {
 QUESTION_TO_CAT_NAME_INITIAL = {q: cat_name for cat_name, qs in CATEGORY_MAPPING_INITIAL.items() for q in qs}
 
 PARENT_TO_CHILD_MAPPING = {}
-all_parent_teams_in_map = set(p for parents in REORG_MAPPING_Y_LAST_TO_Y1.values() for p in parents)
+all_parent_teams_in_map = {p for parents in REORG_MAPPING_Y_LAST_TO_Y1.values() for p in parents}
 all_child_teams_in_map = set(REORG_MAPPING_Y_LAST_TO_Y1.keys())
 
 for parent in all_parent_teams_in_map:
-    PARENT_TO_CHILD_MAPPING[parent] = [child for child, parents in REORG_MAPPING_Y_LAST_TO_Y1.items() if
-                                       parent in parents]
+    PARENT_TO_CHILD_MAPPING[parent] = [child for child, parents in REORG_MAPPING_Y_LAST_TO_Y1.items()
+                                       if parent in parents]
 
 for child, parents in REORG_MAPPING_Y_LAST_TO_Y1.items():
     if len(parents) == 1 and parents[0] == child and child not in PARENT_TO_CHILD_MAPPING:
@@ -102,7 +111,10 @@ for child, parents in REORG_MAPPING_Y_LAST_TO_Y1.items():
 # Helper Functions
 # -----------------------------------------
 
-def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_resp_per_team_year, category_map_sim,
+def simulate_dora_data_reorg(sim_years_reorg,
+                             reorg_map_child_to_parents,
+                             sim_n_resp_per_team_year,
+                             category_map_sim,
                              response_options_sim):
     """
     Generates simulated DORA survey data reflecting transitions over 3 years,
@@ -111,9 +123,9 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
     print("--- Section 1: Simulating Sample DORA Data with Reorg ---")
     year1, year2, year3 = sim_years_reorg[0], sim_years_reorg[1], sim_years_reorg[2]
 
-    year1_teams_sim = sorted(list(set(p for parents in reorg_map_child_to_parents.values() for p in parents)))
-    year2_teams_sim = sorted(list(set(p for parents in reorg_map_child_to_parents.values() for p in parents)))
-    year3_teams_sim = sorted(list(reorg_map_child_to_parents.keys()))
+    year1_teams_sim = sorted(p for parents in reorg_map_child_to_parents.values() for p in parents)
+    year2_teams_sim = sorted(p for parents in reorg_map_child_to_parents.values() for p in parents)
+    year3_teams_sim = sorted(reorg_map_child_to_parents.keys())
 
     # Establish department mappings for demographics
     team_to_dept = {
@@ -234,7 +246,7 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
             if (team, year) not in true_latent_combined:
                 continue
 
-            for i in range(sim_n_resp_per_team_year):
+            for _ in range(sim_n_resp_per_team_year):
                 row = {YEAR_COL: year, ID_VAR: team, 'dept': team_to_dept.get(team, 'Other')}
                 for q in questions_sim:
                     cat = question_categories_sim[q]
@@ -256,12 +268,12 @@ def simulate_dora_data_reorg(sim_years_reorg, reorg_map_child_to_parents, sim_n_
 
     df = pd.DataFrame(data)
     true_params = {
-        'true_a':
-                       true_a, 'true_cutpoints': true_cutpoints,
-        'true_Omega':  true_Omega,
-        'true_latent': true_latent_combined,
-        'true_mu':     true_mu,
-        'true_sigma':  true_sigma,
+        'true_a':         true_a,
+        'true_cutpoints': true_cutpoints,
+        'true_Omega':     true_Omega,
+        'true_latent':    true_latent_combined,
+        'true_mu':        true_mu,
+        'true_sigma':     true_sigma,
     }
     return df, true_params
 
@@ -332,13 +344,13 @@ def plot_reorg_slope_chart_standardized_internal(theta_df_viz,
                     line_color = color_map_y2.get(child, 'gray')
                     ax.plot([year1, year2], [y1_val_z, y2_val_z], linestyle='-', lw=2.5, color=line_color, alpha=0.6)
 
-    adjust_text(texts, ax=ax, force_points=(0.2, 0.3), arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
+    adjust_text(texts, ax=ax, force_points=(0.2, 0.3), arrowprops={'arrowstyle': '-', 'color': 'gray', 'lw': 0.5})
 
     title_suffix = f" - {target_dept}" if target_dept else ""
     ax.set_title(f'Standardized Capability Evolution: {category_name_viz} ({year1} vs {year2}){title_suffix}',
                  fontsize=14)
     ax.set_xlabel('Year', fontsize=12)
-    ax.set_ylabel(f'Capability Z-Score (Std. Devs from Mean)', fontsize=12)
+    ax.set_ylabel('Capability Z-Score (Std. Devs from Mean)', fontsize=12)
     ax.set_xticks([year1, year2])
     ax.grid(True, axis='y', linestyle='--', alpha=0.6)
     ax.axhline(0, color='gray', linestyle='-', linewidth=1.0, alpha=0.8)
@@ -360,7 +372,7 @@ def plot_omega_clustermap(corr_df_viz, output_dir_viz):
             vmin=-1, vmax=1, center=0, annot=(n_cats <= 12), fmt=".2f",
             linewidths=.5, linecolor='lightgray', figsize=figsize
         )
-        cluster_grid.fig.suptitle('Capability Correlations (Mean Omega)', y=1.02)
+        cluster_grid.figure.suptitle('Capability Correlations (Mean Omega)', y=1.02)
         filepath = os.path.join(output_dir_viz, 'omega_clustermap.png')
         plt.savefig(filepath, bbox_inches='tight')
         plt.close()
@@ -421,19 +433,29 @@ def plot_likert_response_distributions(df_raw,
 
         title_suffix = f" - {target_dept}" if target_dept else ""
         ax.set_title(f"{category} ({target_year}){title_suffix}\nTeam Response Distribution (Sorted by Rank)\n",
-                     fontsize=13, weight='bold')
+                     fontsize=13,
+                     weight='bold')
         ax.set_xlabel('Percentage of Responses', fontsize=11)
         ax.set_ylabel('Team (Capability Rank - Bottom to Top)', fontsize=11)
         ax.set_xlim([0, 100])
-        ax.legend(response_options[::-1], title='Response', loc='upper center', bbox_to_anchor=(0.5, -0.15),
-                  ncol=len(response_options), frameon=False)
+        ax.legend(response_options[::-1],
+                  title='Response',
+                  loc='upper center',
+                  bbox_to_anchor=(0.5, -0.15),
+                  ncol=len(response_options),
+                  frameon=False)
 
         for idx, (team, row) in enumerate(plot_df.iterrows()):
             start_pos = 0
             for j, val in enumerate(row):
                 if val > 3.5:
                     text_color = 'white' if j in (0, len(response_options) - 1) else 'black'
-                    ax.text(start_pos + val / 2, idx, f'{val:.0f}%', va='center', ha='center', color=text_color,
+                    ax.text(start_pos + val / 2,
+                            idx,
+                            f'{val:.0f}%',
+                            va='center',
+                            ha='center',
+                            color=text_color,
                             fontsize=9)
                 start_pos += val
 
@@ -467,7 +489,7 @@ def plot_team_ridge_plots(idata, theta_df, category_name, output_dir, target_dep
     unique_years = sorted(theta_df[YEAR_COL].unique())
     num_teams = len(unique_teams)
 
-    fig, axes = plt.subplots(num_teams, 1, figsize=(14, 2.8 * num_teams), sharex=True)
+    _, axes = plt.subplots(num_teams, 1, figsize=(14, 2.8 * num_teams), sharex=True)
     if num_teams == 1:
         axes = [axes]
 
@@ -557,7 +579,8 @@ def run_diagnostic_checks(idata, df_long, cat_idx_to_name_map, question_idx_map)
     low_groups = responses_per_group[responses_per_group < MIN_RESPONSES_PER_GROUP]
     for g, sz in low_groups.items():
         warnings_found.append(
-            f"WARNING: Group '{g}' has only {sz} responses (minimum threshold is {MIN_RESPONSES_PER_GROUP}).")
+            f"WARNING: Group '{g}' has only {sz} responses (minimum threshold is {MIN_RESPONSES_PER_GROUP})."
+        )
 
     # 2. Check for Divergences
     if hasattr(idata, "sample_stats") and "diverging" in idata.sample_stats.data_vars:
@@ -584,7 +607,7 @@ def run_diagnostic_checks(idata, df_long, cat_idx_to_name_map, question_idx_map)
         msg = f"WARNING: Low effective sample size detected (ESS < {NEFF_RATIO_THRESHOLD * ITER_SAMPLING * CHAINS:.0f})."
         warnings_found.append(msg)
 
-    # 4. Check for Low Discrimination Items
+    # 4. Check for Low Discrimination Items using both question and category maps
     idx_to_question = {v: k for k, v in question_idx_map.items()}
     a_summary = summary[summary.index.str.startswith("a")]
     for idx_str, row in a_summary.iterrows():
@@ -594,7 +617,10 @@ def run_diagnostic_checks(idata, df_long, cat_idx_to_name_map, question_idx_map)
             q_name = idx_to_question.get(q_idx, f"Idx {q_idx}")
             mean_a = row['mean']
             if mean_a < LOW_DISCRIMINATION_THRESHOLD:
-                warnings_found.append(f"WARNING: Question '{q_name}' has low mean discrimination of {mean_a:.3f}.")
+                # Find category index and map to category name
+                cat_idx = QUESTION_TO_CAT_NAME_INITIAL.get(q_name, "Unknown")
+                warnings_found.append(
+                    f"WARNING: Question '{q_name}' in category '{cat_idx}' has low mean discrimination of {mean_a:.3f}.")
 
     return warnings_found
 
@@ -643,8 +669,8 @@ def create_ranking_summary(theta_df_in, id_var_in, year_col_in, cat_map_in, year
 def main():
     # --- Section 1: Data Simulation ---
     RUN_SIMULATION = True
-    df_raw = None
-    true_params = None
+    df_raw: pd.DataFrame
+    true_params: dict
 
     if RUN_SIMULATION:
         sim_years_list = [2023, 2024, 2025]
@@ -666,6 +692,7 @@ def main():
             print("ERROR: Real data file not found.")
             return
 
+    print(f'{(datetime.datetime.now() - T_START).total_seconds()} total seconds elapsed')
     # --- Section 2: Data Preprocessing ---
     print("\n--- Section 2: Loading & Preprocessing Data ---")
     try:
@@ -708,7 +735,9 @@ def main():
     cat_idx_to_name_final = {idx: name for idx, name in enumerate(final_cat_names)}
     N_LATENT_final = len(category_mapping_final)
 
-    df_long = df_raw.melt(id_vars=[YEAR_COL, ID_VAR, 'dept'], value_vars=questions_to_use, var_name='question',
+    df_long = df_raw.melt(id_vars=[YEAR_COL, ID_VAR, 'dept'],
+                          value_vars=questions_to_use,
+                          var_name='question',
                           value_name='response')
     df_long.dropna(subset=['response'], inplace=True)
 
@@ -726,8 +755,8 @@ def main():
     groups_final = sorted(df_long['group'].unique())
     group_idx_map = {g: i for i, g in enumerate(groups_final)}
     df_long['group_idx'] = df_long['group'].map(group_idx_map)
-    group_idx_to_info = {idx: {"team": g.split('|')[0], "year": int(g.split('|')[1])} for g, idx in
-                         group_idx_map.items()}
+    group_idx_to_info = {idx: {"team": g.split('|')[0], "year": int(g.split('|')[1])}
+                         for g, idx in group_idx_map.items()}
 
     question_idx_map = {q: i for i, q in enumerate(questions_to_use)}
     df_long['question_idx'] = df_long['question'].map(question_idx_map)
@@ -742,12 +771,15 @@ def main():
     L_final = N_LATENT_final
     print(f"\nFinal Data Counts: N={N_final}, J={J_final}, K={K_final}, C={C_final}, L={L_final}")
 
+    print(f'{(datetime.datetime.now() - T_START).total_seconds()} total seconds elapsed')
+
     # --- Section 3: Defining PyMC Model ---
     print("\n--- Section 3: Defining PyMC Model ---")
     with pm.Model() as dora_mgrm_model:
-        z = pm.Normal("z", mu=0, sigma=1, shape=(L_final, J_final))
+        # Start latent traits at exactly 0
+        z = pm.Normal("z", mu=0, sigma=1, shape=(L_final, J_final), initval=np.zeros((L_final, J_final)))
 
-        # Unpacked Cholesky LKJ Covariance modeling directly
+        # LKJ Covariance modeling directly
         chol_cov, corr, sigma_val = pm.LKJCholeskyCov(
             "chol_cov", n=L_final, eta=2.0, sd_dist=pm.HalfNormal.dist(1.0)
         )
@@ -756,13 +788,20 @@ def main():
         sigma = pm.Deterministic("sigma", sigma_val)
         Omega = pm.Deterministic("Omega", corr)
 
-        mu = pm.Normal("mu", mu=0, sigma=1, shape=(L_final, 1))
+        # Start means at 0
+        mu = pm.Normal("mu", mu=0, sigma=1, shape=(L_final, 1), initval=np.zeros((L_final, 1)))
         theta = pm.Deterministic("theta", (mu + pt.dot(chol_cov, z)).T)
 
-        a = pm.LogNormal("a", mu=0.0, sigma=0.5, shape=K_final)
+        # Start discrimination at exactly 1.0 (Standard Rasch assumption baseline)
+        a = pm.LogNormal("a", mu=0.0, sigma=0.5, shape=K_final, initval=np.ones(K_final))
 
-        first_cut = pm.Normal("first_cut", mu=0.0, sigma=3.0, shape=(K_final, 1))
-        cut_diffs = pm.Exponential("cut_diffs", lam=1.0, shape=(K_final, C_final - 2))
+        # Force cutpoints to start perfectly evenly spaced (e.g., -2, -1, 0, 1, 2)
+        first_cut = pm.Normal("first_cut", mu=0.0, sigma=3.0, shape=(K_final, 1), initval=np.full((K_final, 1), -2.0))
+        cut_diffs = pm.Exponential("cut_diffs",
+                                   lam=1.0,
+                                   shape=(K_final, C_final - 2),
+                                   initval=np.ones((K_final, C_final - 2)))
+
         cutpoints = pm.Deterministic(
             "cutpoints",
             pt.concatenate([first_cut, first_cut + pt.cumsum(cut_diffs, axis=1)], axis=1)
@@ -774,7 +813,8 @@ def main():
 
         eta = a[obs_q_idx] * theta[obs_g_idx, obs_dim_idx]
 
-        y_obs = pm.OrderedLogistic(
+        # Likelihood is declared directly into model context, suppressing unused-variable warnings
+        pm.OrderedLogistic(
             "y_obs",
             eta=eta,
             cutpoints=cutpoints[obs_q_idx],
@@ -789,45 +829,32 @@ def main():
     except Exception as e:
         print(f"Skipped Graphviz model visualization (install Graphviz for this feature): {e}")
 
+    print(f'{(datetime.datetime.now() - T_START).total_seconds()} total seconds elapsed')
     # --- Section 4: Running PyMC Sampler ---
     print("\n--- Section 4: Running PyMC Sampler ---")
-    if USE_GPU:
-        try:
-            import pymc.sampling.jax as pm_jax
-            print("Sampling using JAX (NumPyro) on GPU...")
-            with dora_mgrm_model:
-                idata = pm_jax.sample_numpyro(
-                    draws=ITER_SAMPLING,
-                    tune=ITER_WARMUP,
-                    chains=CHAINS,
-                    random_seed=RANDOM_SEED,
-                    target_accept=0.85
-                )
-        except ImportError as e:
-            warnings.warn(f"WARNING: JAX/NumPyro installation not found. Falling back to CPU sampling. Error: {e}")
-            with dora_mgrm_model:
-                idata = pm.sample(
-                    draws=ITER_SAMPLING,
-                    tune=ITER_WARMUP,
-                    chains=CHAINS,
-                    random_seed=RANDOM_SEED,
-                    target_accept=0.85,
-                    init="jitter+adapt_diag"
-                )
-    else:
-        with dora_mgrm_model:
-            idata = pm.sample(
-                draws=ITER_SAMPLING,
-                tune=ITER_WARMUP,
-                chains=CHAINS,
-                random_seed=RANDOM_SEED,
-                target_accept=0.85,
-                init="jitter+adapt_diag"
-            )
 
+    if GPU_DETECTED:
+        print("Sampling using JAX (NumPyro) on GPU...")
+    else:
+        print("Sampling using JAX (NumPyro) on CPU (Optimized via XLA)...")
+
+    with dora_mgrm_model:
+        idata = pm.sample(
+            draws=ITER_SAMPLING,
+            tune=ITER_WARMUP,
+            chains=CHAINS,
+            random_seed=RANDOM_SEED,
+            target_accept=0.80,  # Standard NUTS target (reduces leapfrog steps for speed)
+            init="adapt_diag",
+            nuts_sampler='numpyro'  # or fallback to `nuts` without numpyro and jax installed
+        )
+
+    print(f'{(datetime.datetime.now() - T_START).total_seconds()} total seconds elapsed')
     # --- Section 5: Run Diagnostics ---
+    print("\n--- Section 5: Run Diagnostics ---")
     diagnostic_warnings = run_diagnostic_checks(idata, df_long, cat_idx_to_name_final, question_idx_map)
 
+    print(f'{(datetime.datetime.now() - T_START).total_seconds()} total seconds elapsed')
     # --- Section 6: Extract and Save Results (Including Credible Intervals) ---
     print("\n--- Section 6: Extracting and Processing Results ---")
 
@@ -921,8 +948,9 @@ def main():
         ranking_filepath = os.path.join(OUTPUT_DIR, 'team_rankings_by_category.csv')
         ranking_summary_df.to_csv(ranking_filepath, index=False, float_format='%.3f')
 
-    # --- Section 8: Visualizations ---
-    print("\n--- Section 8: Generating Visualizations ---")
+    print(f'{(datetime.datetime.now() - T_START).total_seconds()} total seconds elapsed')
+    # --- Section 7: Visualizations ---
+    print("\n--- Section 7: Generating Visualizations ---")
 
     # Example target filter: Focus on 'Engineering' department to demonstrate post-hoc demographics
     demographic_filter = 'Engineering'
@@ -974,6 +1002,7 @@ def main():
 
         if corr_df_out is not None:
             plot_omega_clustermap(corr_df_out, OUTPUT_DIR)
+    print(f'{(datetime.datetime.now() - T_START).total_seconds()} total seconds elapsed')
 
     # Print a clean report of any warnings detected during Section 5 diagnostics
     if diagnostic_warnings:
@@ -990,6 +1019,7 @@ def main():
 
     print("\n--- Analysis Complete ---")
     print(f"Results, diagnostics, and plots saved in: {OUTPUT_DIR}")
+    print(f'{(datetime.datetime.now() - T_START).total_seconds()} total seconds elapsed')
 
 
 if __name__ == '__main__':

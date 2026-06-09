@@ -10,3 +10,9 @@ seaborn
 
 fastprogress
 numba
+numpyro
+jax
+#conda install mkl mkl-service
+
+scipy-stubs
+pandas-stubs
