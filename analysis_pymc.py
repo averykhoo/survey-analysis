@@ -10,7 +10,6 @@ Purpose: Analyze Likert-scale DORA survey responses using a Bayesian
          plots item-level diagnostics (ICC/KDE, CRF, IIF), Test Information (TIF)
          and performs rigorous diagnostic checks.
 """
-import pprint
 
 # --- JAX Parallelization (MUST BE AT THE ABSOLUTE TOP, BEFORE OTHER IMPORTS) ---
 import numpyro
@@ -44,7 +43,8 @@ from scipy.stats import gaussian_kde
 # Global Constants & MCMC Settings
 # -----------------------------------------
 
-# numba/jax mode does not work with this model
+# NUMBA/JAX MODE DOES NOT WORK WITH THIS MODEL
+# there are things that jax cannot handle, and numpy just falls back to object mode
 # pytensor.config.mode = "NUMBA"  # Bypasses slow C++ compiler compilation on local machines
 # pytensor.config.cxx = ""        # Disables standard C-compilation warnings
 
@@ -532,14 +532,17 @@ def plot_team_ridge_plots(idata, theta_df, category_name, output_dir, target_dep
     if theta_df.empty:
         return
 
-    # Extract posterior samples of theta: (samples, J, L)
-    theta_samples = idata.posterior['theta_z'].stack(samples=['chain', 'draw']).values
-    theta_samples = theta_samples.transpose(2, 0, 1)
-
+    # Extract category index
     cat_names = list(CATEGORY_MAPPING_INITIAL.keys())
     if category_name not in cat_names:
         return
     cat_idx = cat_names.index(category_name)
+
+    # 1. Consolidate stacking to execute exactly once
+    theta_full = idata.posterior['theta_z'].stack(samples=['chain', 'draw']).values
+
+    # 2. Thin posterior draws to 600 samples for the expensive KDE density calculations (10x speedup)
+    theta_thinned = theta_full[:, cat_idx, ::10]  # Shape: (J, 600)
 
     unique_teams = sorted(theta_df[ID_VAR].unique())
     unique_years = sorted(theta_df[YEAR_COL].unique())
@@ -550,6 +553,9 @@ def plot_team_ridge_plots(idata, theta_df, category_name, output_dir, target_dep
         axes = [axes]
 
     palette = sns.color_palette("muted", num_teams)
+
+    # 3. Streamline grid to 100 points (3x speedup with identical curve smoothness)
+    x_vals = np.linspace(-3.5, 3.5, 100)
 
     for i, team in enumerate(unique_teams):
         ax = axes[i]
@@ -565,11 +571,8 @@ def plot_team_ridge_plots(idata, theta_df, category_name, output_dir, target_dep
                 continue
             grp_idx = grp_rows['group_idx'].values[0] - 1  # 0-based for python index
 
-            samples = theta_samples[:, grp_idx, cat_idx]
-
-            # Reconstruct KDE coordinates manually for robust custom hatching/fill options
-            kde = gaussian_kde(samples)
-            x_vals = np.linspace(-3.5, 3.5, 300)
+            # KDE generated on thinned samples
+            kde = gaussian_kde(theta_thinned[grp_idx, :])
             y_vals = kde(x_vals)
 
             if year == 2023:
@@ -583,12 +586,12 @@ def plot_team_ridge_plots(idata, theta_df, category_name, output_dir, target_dep
                 # 2026: Opaque solid fill
                 ax.fill_between(x_vals, y_vals, color=team_color, alpha=0.85, zorder=1)
 
-        # Draw red vertical line at the latest year's posterior mean
+        # Draw red vertical line at the latest year's posterior mean (calculated on full unthinned draws for precision)
         latest_year = unique_years[-1]
         latest_rows = theta_df[(theta_df[ID_VAR] == team) & (theta_df[YEAR_COL] == latest_year)]
         if not latest_rows.empty:
             latest_grp_idx = latest_rows['group_idx'].values[0] - 1
-            latest_mean = theta_samples[:, latest_grp_idx, cat_idx].mean()
+            latest_mean = theta_full[latest_grp_idx, cat_idx, :].mean()
             ax.axvline(latest_mean, color='red', linestyle='-', lw=2, zorder=5)
 
         # Labels & Aesthetics
@@ -640,23 +643,28 @@ def plot_category_response_functions(question_id, idata, question_idx_map, outpu
     cut_samples = idata.posterior['cutpoints'].values.reshape(-1, len(question_idx_map), N_CATEGORIES_RESPONSE - 1)[
         :, q_idx, :]
 
+    # Thin posterior draws to 100 evenly spaced samples for rapid, stable vectorization
+    thin_idx = np.linspace(0, len(a_samples) - 1, 100, dtype=int)
+    a_samples = a_samples[thin_idx, None, None]  # Shape: (100, 1, 1)
+    cut_samples = cut_samples[thin_idx, None, :]  # Shape: (100, 1, 5)
+
     theta_vals = np.linspace(-3.5, 3.5, 100)
-    probs = np.zeros((len(theta_vals), N_CATEGORIES_RESPONSE))
+    theta_grid = theta_vals[None, :, None]  # Shape: (1, 100, 1)
 
-    for i, th in enumerate(theta_vals):
-        draw_probs = []
-        for a_val, cuts in zip(a_samples, cut_samples):
-            eta = a_val * th
-            cum_prob = sps.expit(cuts - eta)
-            p = np.zeros(N_CATEGORIES_RESPONSE)
-            p[0] = cum_prob[0]
-            for c in range(1, N_CATEGORIES_RESPONSE - 1):
-                p[c] = cum_prob[c] - cum_prob[c - 1]
-            p[-1] = 1.0 - cum_prob[-1]
-            draw_probs.append(p)
-        probs[i, :] = np.mean(draw_probs, axis=0)
+    # Completely vectorized probability calculation
+    eta = a_samples * theta_grid  # Shape: (100, 100, 1)
+    cum_prob = sps.expit(cut_samples - eta)  # Shape: (100, 100, 5)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    probs_all = np.zeros((100, 100, N_CATEGORIES_RESPONSE))
+    probs_all[:, :, 0] = cum_prob[:, :, 0]
+    for c in range(1, N_CATEGORIES_RESPONSE - 1):
+        probs_all[:, :, c] = cum_prob[:, :, c] - cum_prob[:, :, c - 1]
+    probs_all[:, :, -1] = 1.0 - cum_prob[:, :, -1]
+
+    # Mean across posterior draws (axis 0)
+    probs = np.mean(probs_all, axis=0)  # Shape: (100, 6)
+
+    _, ax = plt.subplots(figsize=(8, 5))
     colors = plt.colormaps['viridis'].resampled(N_CATEGORIES_RESPONSE)
     for c in range(N_CATEGORIES_RESPONSE):
         ax.plot(theta_vals, probs[:, c], color=colors(c), lw=2, label=f"Category {c + 1}")
@@ -692,23 +700,39 @@ def plot_predicted_vs_empirical_dist(question_id,
 
     q_dim = question_to_dimension_pymc[q_idx]
 
-    pred_draws = []
-    rng = np.random.default_rng(RANDOM_SEED)
-    for a_val, cuts, ths in zip(a_samples, cut_samples, theta_samples):
-        for g_idx in grp_indices:
-            th = ths[g_idx, q_dim]
-            eta = a_val * th
-            cum_prob = sps.expit(cuts - eta)
-            p = np.zeros(N_CATEGORIES_RESPONSE)
-            p[0] = cum_prob[0]
-            for c in range(1, N_CATEGORIES_RESPONSE - 1):
-                p[c] = cum_prob[c] - cum_prob[c - 1]
-            p[-1] = 1.0 - cum_prob[-1]
-            p = np.maximum(p, 0)
-            p /= p.sum()
-            pred_draws.append(rng.choice(RESPONSE_OPTIONS, p=p))
+    # Thin posterior draws to 100 for rapid vectorization and memory safety
+    thin_idx = np.linspace(0, len(a_samples) - 1, 100, dtype=int)
+    a_s = a_samples[thin_idx, None]  # (100, 1)
+    cut_s = cut_samples[thin_idx, None, :]  # (100, 1, 5)
+    th_s = theta_samples[thin_idx][:, grp_indices, q_dim]  # (100, N_obs)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    # eta = a_s * th_s -> shape: (100, N_obs)
+    eta = a_s * th_s
+
+    # Vectorized category probability calculation
+    probs_all = np.zeros((100, len(grp_indices), N_CATEGORIES_RESPONSE - 1))
+    for c in range(N_CATEGORIES_RESPONSE - 1):
+        logit = cut_s[:, :, c] - eta
+        probs_all[:, :, c] = sps.expit(logit)
+
+    p_cat = np.zeros((100, len(grp_indices), N_CATEGORIES_RESPONSE))
+    p_cat[:, :, 0] = probs_all[:, :, 0]
+    for c in range(1, N_CATEGORIES_RESPONSE - 1):
+        p_cat[:, :, c] = probs_all[:, :, c] - probs_all[:, :, c - 1]
+    p_cat[:, :, -1] = 1.0 - probs_all[:, :, -2]
+
+    # Clip and normalize
+    p_cat = np.maximum(p_cat, 0)
+    p_cat /= p_cat.sum(axis=2, keepdims=True)
+
+    # Average probabilities across posterior draws to collapse down to exactly N_obs rows
+    mean_p = np.mean(p_cat, axis=0)  # Shape: (N_obs, 6)
+
+    # Execute exactly one random selection draw per observation (reducing choice overhead by 6,000x)
+    rng = np.random.default_rng(RANDOM_SEED)
+    pred_draws = [rng.choice(RESPONSE_OPTIONS, p=p) for p in mean_p]
+
+    _, ax = plt.subplots(figsize=(8, 5))
     bins = np.arange(min(RESPONSE_OPTIONS) - 0.5, max(RESPONSE_OPTIONS) + 1.5, 1)
     ax.hist(obs_data, bins=bins, alpha=0.5, color='gray', label='Observed', density=True, edgecolor='black')
     ax.hist(pred_draws, bins=bins, alpha=0.5, color='dodgerblue', label='Predicted', density=True, edgecolor='blue')
@@ -732,21 +756,27 @@ def plot_item_information_function(question_id, idata, question_idx_map, output_
     cut_samples = idata.posterior['cutpoints'].values.reshape(-1, len(question_idx_map), N_CATEGORIES_RESPONSE - 1)[
         :, q_idx, :]
 
+    # Thin posterior draws to 100 evenly spaced samples for rapid, stable vectorization
+    thin_idx = np.linspace(0, len(a_samples) - 1, 100, dtype=int)
+    a_samples = a_samples[thin_idx, None]  # (100, 1)
+    cut_samples = cut_samples[thin_idx, None, :]  # (100, 1, 5)
+
     theta_vals = np.linspace(-3.5, 3.5, 100)
-    info = np.zeros(len(theta_vals))
+    theta_grid = theta_vals[None, :]  # (1, 100)
 
-    for i, th in enumerate(theta_vals):
-        draw_infos = []
-        for a_val, cuts in zip(a_samples, cut_samples):
-            item_info = 0
-            for c in range(N_CATEGORIES_RESPONSE - 1):
-                logit = cuts[c] - a_val * th
-                P_star = sps.expit(logit)
-                item_info += P_star * (1.0 - P_star)
-            draw_infos.append(item_info * (a_val ** 2))
-        info[i] = np.mean(draw_infos)
+    # Completely vectorized informational math
+    eta = a_samples * theta_grid  # (100, 100)
+    info_all = np.zeros((100, 100))
+    for c in range(N_CATEGORIES_RESPONSE - 1):
+        logit = cut_samples[:, :, c] - eta
+        P_star = sps.expit(logit)
+        info_all += P_star * (1.0 - P_star)
+    info_all *= (a_samples ** 2)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    # Average across posterior draws (axis 0)
+    info = np.mean(info_all, axis=0)
+
+    _, ax = plt.subplots(figsize=(8, 5))
     ax.plot(theta_vals, info, color='navy', lw=2)
     ax.set_xlabel("Latent Trait (Theta)")
     ax.set_ylabel("Item Information")
@@ -762,14 +792,19 @@ def plot_test_information_function(idata, K_final, output_dir):
     a_samples = idata.posterior['a'].values.reshape(-1, K_final)
     cut_samples = idata.posterior['cutpoints'].values.reshape(-1, K_final, N_CATEGORIES_RESPONSE - 1)
 
+    # Thin to 100 draws
+    thin_idx = np.linspace(0, len(a_samples) - 1, 100, dtype=int)
+    a_s = a_samples[thin_idx]
+    cut_s = cut_samples[thin_idx]
+
     theta_vals = np.linspace(-3.5, 3.5, 100)
     tif = np.zeros(len(theta_vals))
 
     for i, th in enumerate(theta_vals):
-        draw_infos = np.zeros(a_samples.shape[0])
+        draw_infos = np.zeros(100)
         for k in range(K_final):
-            a_k = a_samples[:, k]
-            cuts_k = cut_samples[:, k, :]
+            a_k = a_s[:, k]
+            cuts_k = cut_s[:, k, :]
             for c in range(N_CATEGORIES_RESPONSE - 1):
                 logit = cuts_k[:, c] - a_k * th
                 P_star = sps.expit(logit)
@@ -778,7 +813,7 @@ def plot_test_information_function(idata, K_final, output_dir):
 
     sem = 1.0 / np.sqrt(np.maximum(tif, 1e-6))
 
-    fig, ax1 = plt.subplots(figsize=(10, 6))
+    _, ax1 = plt.subplots(figsize=(10, 6))
     ax1.plot(theta_vals, tif, color='darkblue', lw=2.5, label='Test Information')
     ax1.set_xlabel("Latent Trait (Theta)")
     ax1.set_ylabel("Test Information", color='darkblue')
@@ -1030,7 +1065,7 @@ def main():
         # Force cutpoints to start perfectly evenly spaced (e.g., -2, -1, 0, 1, 2)
         first_cut = pm.Normal("first_cut", mu=0.0, sigma=3.0, shape=(K_final, 1), initval=np.full((K_final, 1), -2.0))
         cut_diffs = pm.Exponential("cut_diffs",
-                                   lam=1.0,
+                                   lam=2.0,
                                    shape=(K_final, C_final - 2),
                                    initval=np.ones((K_final, C_final - 2)))
 
@@ -1076,7 +1111,7 @@ def main():
             tune=ITER_WARMUP,
             chains=CHAINS,
             random_seed=RANDOM_SEED,
-            target_accept=0.80,  # Standard NUTS target (reduces leapfrog steps for speed)
+            target_accept=0.9,
             init="adapt_diag",
             nuts_sampler='numpyro'  # or fallback to `nuts` without numpyro and jax installed
         )
@@ -1273,8 +1308,7 @@ def main():
                     plot_item_information_function(q_id, idata, question_idx_map, OUTPUT_DIR)
 
         # Plot Clustermap with reversed colors
-        if corr_df_out is not None:
-            plot_omega_clustermap(corr_df_out, OUTPUT_DIR)
+        plot_omega_clustermap(corr_df_out, OUTPUT_DIR)
 
         # Plot Test Information Function and SEM
         plot_test_information_function(idata, K_final, OUTPUT_DIR)
