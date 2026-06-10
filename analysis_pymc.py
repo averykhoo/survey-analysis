@@ -10,6 +10,8 @@ Purpose: Analyze Likert-scale DORA survey responses using a Bayesian
          plots item-level diagnostics (ICC/KDE, CRF, IIF), Test Information (TIF)
          and performs rigorous diagnostic checks.
 """
+import pprint
+
 # --- JAX Parallelization (MUST BE AT THE ABSOLUTE TOP, BEFORE OTHER IMPORTS) ---
 import numpyro
 
@@ -126,7 +128,6 @@ def simulate_dora_data_reorg(sim_years_reorg,
     Generates simulated DORA survey data reflecting transitions over 3 years,
     complete with department metadata.
     """
-    print("--- Section 1: Simulating Sample DORA Data with Reorg ---")
     year1, year2, year3 = sim_years_reorg[0], sim_years_reorg[1], sim_years_reorg[2]
 
     year1_teams_sim = sorted(p for parents in reorg_map_child_to_parents.values() for p in parents)
@@ -307,7 +308,7 @@ def plot_reorg_slope_chart_standardized_internal(theta_df_viz,
     if pop_mean is None or pop_sd is None or pop_sd <= 1e-6 or theta_df_viz.empty:
         return
 
-    raw_col_name = f"theta_{category_name_viz}"
+    raw_col_name = f"theta_{category_name_viz}_z"  # Trace lineage directly on the Standardized Z scale
     if raw_col_name not in theta_df_viz.columns:
         return
 
@@ -320,57 +321,87 @@ def plot_reorg_slope_chart_standardized_internal(theta_df_viz,
     texts = []
     plotted_coords = {y: {} for y in available_years}
 
+    # Classify occurrence frequency to isolate transient single-year teams
+    team_year_counts = theta_df_viz.groupby(id_var_viz)[year_col_viz].nunique().to_dict()
+
+    # Establish rainbow color spectrum on the latest year's ranking (highest score on top)
+    latest_year = available_years[-1]
+    df_latest = theta_df_viz[theta_df_viz[year_col_viz] == latest_year].set_index(id_var_viz)
+    df_latest_z = df_latest[raw_col_name]
+    sorted_latest_teams = df_latest_z.sort_values(ascending=False).index.tolist()
+
+    cmap_registry = plt.colormaps['Spectral'].resampled(max(1, len(sorted_latest_teams)))
+    color_map_y_last = {team: cmap_registry(i) for i, team in enumerate(sorted_latest_teams)}
+
     # Plot coordinates for each available year
     for idx, yr in enumerate(available_years):
         df_yr = theta_df_viz[theta_df_viz[year_col_viz] == yr].set_index(id_var_viz)
 
-        # Color highlighting configured on the latest year
-        if yr == available_years[-1]:
-            all_latest_teams = sorted(df_yr.index.unique().tolist())
-            cmap_func = plt.colormaps['tab20'].resampled(max(1, len(all_latest_teams)))
-            color_map_y_last = {team: cmap_func(i % 20) for i, team in enumerate(all_latest_teams)}
-
         for team_id, row in df_yr.iterrows():
-            raw_val = row[raw_col_name]
-            if pd.notna(raw_val):
-                val_z = (raw_val - pop_mean) / pop_sd
-                point_color = color_map_y_last.get(team_id, 'gray') if yr == available_years[-1] else (
-                    'black' if idx == 0 else 'gray')
-
-                ax.plot(yr, val_z, 'o', color=point_color, markersize=5 if yr != available_years[-1] else 6)
-                label_align = 'right' if idx == 0 else 'left'
-                label_offset = -0.05 if idx == 0 else 0.05
-                texts.append(ax.text(yr + label_offset, val_z, team_id, ha=label_align, va='center', fontsize=8))
-
+            val_z = row[raw_col_name]
+            if pd.notna(val_z):
                 plotted_coords[yr][team_id] = val_z
 
-    # Draw continuous paths across available years
-    for i in range(len(available_years) - 1):
-        y_from = available_years[i]
-        y_to = available_years[i + 1]
+                # Visual distinction for single-year teams: plot as a "+" or "x" symbol
+                if team_year_counts.get(team_id, 0) == 1:
+                    ax.plot(yr, val_z, 'x', color='gray', markersize=8, mew=2)
+                    label_align = 'right' if idx == 0 else 'left'
+                    label_offset = -0.05 if idx == 0 else 0.05
+                    texts.append(
+                        ax.text(yr + label_offset, val_z, f"{team_id} (Single Yr)", ha=label_align, va='center',
+                                fontsize=8, color='gray'))
+                else:
+                    point_color = color_map_y_last.get(team_id, 'gray') if yr == available_years[-1] else 'gray'
+                    ax.plot(yr, val_z, 'o', color=point_color, markersize=5 if yr != available_years[-1] else 6)
+                    label_align = 'right' if idx == 0 else 'left'
+                    label_offset = -0.05 if idx == 0 else 0.05
+                    texts.append(ax.text(yr + label_offset, val_z, team_id, ha=label_align, va='center', fontsize=8))
 
-        if y_to == available_years[-1]:
-            for parent, children in parent_to_child_map.items():
-                if parent in plotted_coords[y_from]:
-                    y_from_val = plotted_coords[y_from][parent]
-                    for child in children:
-                        if child in plotted_coords[y_to]:
-                            y_to_val = plotted_coords[y_to][child]
-                            line_color = color_map_y_last.get(child, 'gray')
-                            ax.plot([y_from, y_to], [y_from_val, y_to_val], linestyle='-', lw=2.5, color=line_color,
-                                    alpha=0.6)
-        else:
-            for team, val_from in plotted_coords[y_from].items():
-                if team in plotted_coords[y_to]:
-                    ax.plot([y_from, y_to], [val_from, plotted_coords[y_to][team]], linestyle=':', color='gray',
-                            alpha=0.5)
+    # Trace lineages backward from current teams (Y3 -> Y2 -> Y1)
+    for latest_team in sorted_latest_teams:
+        team_color = color_map_y_last[latest_team]
+
+        # Resolve parent relationships mapped from latest year to previous years
+        parents = [parent for parent, children in parent_to_child_map.items() if latest_team in children]
+        if not parents:
+            parents = [latest_team]  # Fallback to identity mapping if no reorg
+
+        for p_idx, p in enumerate(parents):
+            y_to = available_years[-1]
+            y_from = available_years[-2]
+
+            if p in plotted_coords[y_from] and latest_team in plotted_coords[y_to]:
+                y_from_val = plotted_coords[y_from][p]
+                y_to_val = plotted_coords[y_to][latest_team]
+
+                # Split/merge visualization: solid line for first parent, dashed for remaining parents
+                line_style = '-' if p_idx == 0 else '--'
+                ax.plot([y_from, y_to], [y_from_val, y_to_val], linestyle=line_style, lw=2.5, color=team_color,
+                        alpha=0.7)
+
+                # Trace back from Y2 to Y1
+                if len(available_years) > 2:
+                    y_prev = available_years[-3]
+                    if p in plotted_coords[y_prev]:
+                        y_prev_val = plotted_coords[y_prev][p]
+                        ax.plot([y_prev, y_from], [y_prev_val, y_from_val], linestyle=line_style, lw=1.5,
+                                color=team_color, alpha=0.7)
+
+    # Plot transient/dissolved teams (those not active in latest year) as dotted gray lines
+    for idx in range(len(available_years) - 1):
+        y_from = available_years[idx]
+        y_to = available_years[idx + 1]
+
+        for team, val_from in plotted_coords[y_from].items():
+            if team not in sorted_latest_teams and team in plotted_coords[y_to]:
+                ax.plot([y_from, y_to], [val_from, plotted_coords[y_to][team]], linestyle=':', color='gray', alpha=0.4)
 
     adjust_text(texts, ax=ax, force_points=(0.2, 0.3), arrowprops={'arrowstyle': '-', 'color': 'gray', 'lw': 0.5})
 
     title_suffix = f" - {target_dept}" if target_dept else ""
-    years_str = " - ".join(map(str, available_years))  # Fixed NameError by resolving dynamically
-    ax.set_title(f'Standardized Capability Evolution: {category_name_viz} ({years_str}){title_suffix}',
-                 fontsize=14)
+    years_str = " - ".join(map(str, available_years))  # Resolved NameError dynamically
+    ax.set_title(f'Standardized Capability Evolution: {category_name_viz} ({years_str}){title_suffix}', fontsize=14,
+                 weight='bold')
     ax.set_xlabel('Year', fontsize=12)
     ax.set_ylabel('Capability Z-Score (Std. Devs from Mean)', fontsize=12)
     ax.set_xticks(available_years)
@@ -442,7 +473,7 @@ def plot_likert_response_distributions(df_raw,
         counts = df_long_cat.groupby([id_var, 'response']).size().unstack(fill_value=0)
         percentages = counts.div(counts.sum(axis=1), axis=0) * 100
 
-        theta_col = f"theta_{category}"
+        theta_col = f"theta_{category}_z"
         if theta_col in df_overall_year.columns:
             ordered_teams = df_overall_year.sort_values(by=theta_col, ascending=True)[id_var].tolist()
         else:
@@ -502,7 +533,7 @@ def plot_team_ridge_plots(idata, theta_df, category_name, output_dir, target_dep
         return
 
     # Extract posterior samples of theta: (samples, J, L)
-    theta_samples = idata.posterior['theta'].stack(samples=['chain', 'draw']).values
+    theta_samples = idata.posterior['theta_z'].stack(samples=['chain', 'draw']).values
     theta_samples = theta_samples.transpose(2, 0, 1)
 
     cat_names = list(CATEGORY_MAPPING_INITIAL.keys())
@@ -588,7 +619,7 @@ def plot_team_ridge_plots(idata, theta_df, category_name, output_dir, target_dep
                frameon=False,
                fontsize=11)
 
-    plt.xlabel('Capability Score (Theta)', fontsize=12, labelpad=15)
+    plt.xlabel('Capability Score (Theta Standard Deviations)', fontsize=12, labelpad=15)
     plt.xlim(-3.5, 3.5)
     plt.tight_layout()
 
@@ -644,8 +675,7 @@ def plot_predicted_vs_empirical_dist(question_id,
                                      df_long,
                                      question_idx_map,
                                      output_dir,
-                                     question_to_dimension_pymc,
-                                     ):
+                                     question_to_dimension_pymc):
     """Plots model-predicted response distribution vs. empirical data."""
     if question_id not in question_idx_map:
         return
@@ -800,8 +830,7 @@ def run_diagnostic_checks(idata, df_long, cat_idx_to_name_map, question_idx_map)
     min_ess = summary['ess_bulk'].min()
     print(f"  Min ESS (bulk) observed: {min_ess:.1f}")
     if min_ess < (NEFF_RATIO_THRESHOLD * ITER_SAMPLING * CHAINS):
-        msg = (f"WARNING: Low effective sample size ({min_ess=}) detected "
-               f"(ESS < {NEFF_RATIO_THRESHOLD * ITER_SAMPLING * CHAINS:.0f}).")
+        msg = f"WARNING: Low effective sample size ({min_ess=}) detected (ESS < {NEFF_RATIO_THRESHOLD * ITER_SAMPLING * CHAINS:.0f})."
         warnings_found.append(msg)
 
     # 4. Check for Low Discrimination Items using both question and category maps
@@ -870,6 +899,7 @@ def main():
     true_params: dict
 
     if RUN_SIMULATION:
+        print("--- Section 1: Simulating Sample DORA Data with Reorg ---")
         # Structured exactly to represent requested 3-year timeline: 2023, 2025, and 2026
         sim_years_list = [2023, 2025, 2026]
         sim_n_resp = 20
@@ -880,6 +910,7 @@ def main():
             category_map_sim=CATEGORY_MAPPING_INITIAL,
             response_options_sim=RESPONSE_OPTIONS
         )
+        print(df_raw.head().to_markdown())
     else:
         print("--- Section 1: Loading Real Data ---")
         try:
@@ -990,6 +1021,9 @@ def main():
         mu = pm.Normal("mu", mu=0, sigma=1, shape=(L_final, 1), initval=np.zeros((L_final, 1)))
         theta = pm.Deterministic("theta", (mu + pt.dot(chol_cov, z)).T)
 
+        # Track standardized capability scores (Z-scores) natively inside the posterior trace
+        pm.Deterministic("theta_z", (theta - mu.T) / sigma_val, dims=None)
+
         # Start discrimination at exactly 1.0 (Standard Rasch assumption baseline)
         a = pm.LogNormal("a", mu=0.0, sigma=0.5, shape=K_final, initval=np.ones(K_final))
 
@@ -1092,17 +1126,22 @@ def main():
     })
     sigma_summary_df.to_csv(os.path.join(OUTPUT_DIR, "sigma_parameter_estimates.csv"), index=False)
 
-    # 3. theta capability scores extraction with lower/upper HDI
+    # 3. theta capability scores extraction with lower/upper HDI and Z-scores
     theta_means = posterior_means["theta"].values
     theta_hdis = hdis["theta"].values  # Shape: (J, L, 2)
+    theta_z_means = posterior_means["theta_z"].values
+    theta_z_hdis = hdis["theta_z"].values  # Shape: (J, L, 2)
 
     theta_columns = [f"theta_{cat}" for cat in category_names_final]
     theta_df_out = pd.DataFrame(theta_means, columns=theta_columns)
 
-    # Append low/high hdi boundaries
+    # Append low/high hdi boundaries and Z-scores (standard deviations from mean)
     for l_idx, cat in enumerate(category_names_final):
         theta_df_out[f"theta_{cat}_hdi_lower"] = theta_hdis[:, l_idx, 0]
         theta_df_out[f"theta_{cat}_hdi_upper"] = theta_hdis[:, l_idx, 1]
+        theta_df_out[f"theta_{cat}_z"] = theta_z_means[:, l_idx]
+        theta_df_out[f"theta_{cat}_z_hdi_lower"] = theta_z_hdis[:, l_idx, 0]
+        theta_df_out[f"theta_{cat}_z_hdi_upper"] = theta_z_hdis[:, l_idx, 1]
 
     theta_df_out['group_idx'] = list(group_idx_map.values())
     theta_df_out['group'] = theta_df_out['group_idx'].map({v: k for k, v in group_idx_map.items()})
@@ -1116,7 +1155,10 @@ def main():
     # Structure column order
     ordered_cols = [ID_VAR, YEAR_COL, 'dept', 'group', 'group_idx'] + theta_columns
     for cat in category_names_final:
-        ordered_cols.extend([f"theta_{cat}_hdi_lower", f"theta_{cat}_hdi_upper"])
+        ordered_cols.extend([
+            f"theta_{cat}_hdi_lower", f"theta_{cat}_hdi_upper",
+            f"theta_{cat}_z", f"theta_{cat}_z_hdi_lower", f"theta_{cat}_z_hdi_upper"
+        ])
     theta_df_out = theta_df_out[ordered_cols]
 
     # Perform response-presence masking to prevent imputed parameters showing up for unasked categories
@@ -1130,6 +1172,9 @@ def main():
                 theta_df_out.loc[(theta_df_out['group'] == group), f"theta_{cat}"] = float('nan')
                 theta_df_out.loc[(theta_df_out['group'] == group), f"theta_{cat}_hdi_lower"] = float('nan')
                 theta_df_out.loc[(theta_df_out['group'] == group), f"theta_{cat}_hdi_upper"] = float('nan')
+                theta_df_out.loc[(theta_df_out['group'] == group), f"theta_{cat}_z"] = float('nan')
+                theta_df_out.loc[(theta_df_out['group'] == group), f"theta_{cat}_z_hdi_lower"] = float('nan')
+                theta_df_out.loc[(theta_df_out['group'] == group), f"theta_{cat}_z_hdi_upper"] = float('nan')
 
     theta_filepath = os.path.join(OUTPUT_DIR, 'team_capability_estimates.csv')
     theta_df_out.to_csv(theta_filepath, index=False)
@@ -1164,53 +1209,67 @@ def main():
             for cat_name in category_mapping_final.keys():
                 # Raw (unfiltered) Slope Charts
                 plot_reorg_slope_chart_standardized_internal(
-                    theta_df_viz=theta_df_out, category_name_viz=cat_name,
-                    id_var_viz=ID_VAR, year_col_viz=YEAR_COL, years_viz=years_to_plot,
-                    mu_map_viz=mu_map_for_plot, sigma_map_viz=sigma_map_for_plot,
-                    parent_to_child_map=PARENT_TO_CHILD_MAPPING, output_dir_viz=OUTPUT_DIR,
-                    target_dept=None
-                )
+                    theta_df_viz=theta_df_out,
+                    category_name_viz=cat_name,
+                    id_var_viz=ID_VAR,
+                    year_col_viz=YEAR_COL,
+                    years_viz=years_to_plot,
+                    mu_map_viz=mu_map_for_plot,
+                    sigma_map_viz=sigma_map_for_plot,
+                    parent_to_child_map=PARENT_TO_CHILD_MAPPING,
+                    output_dir_viz=OUTPUT_DIR,
+                    target_dept=None)
 
                 # Standardized Department-filtered Slope Charts
                 plot_reorg_slope_chart_standardized_internal(
-                    theta_df_viz=theta_df_out, category_name_viz=cat_name,
-                    id_var_viz=ID_VAR, year_col_viz=YEAR_COL, years_viz=years_to_plot,
-                    mu_map_viz=mu_map_for_plot, sigma_map_viz=sigma_map_for_plot,
-                    parent_to_child_map=PARENT_TO_CHILD_MAPPING, output_dir_viz=OUTPUT_DIR,
-                    target_dept=demographic_filter
-                )
+                    theta_df_viz=theta_df_out,
+                    category_name_viz=cat_name,
+                    id_var_viz=ID_VAR,
+                    year_col_viz=YEAR_COL,
+                    years_viz=years_to_plot,
+                    mu_map_viz=mu_map_for_plot,
+                    sigma_map_viz=sigma_map_for_plot,
+                    parent_to_child_map=PARENT_TO_CHILD_MAPPING,
+                    output_dir_viz=OUTPUT_DIR,
+                    target_dept=demographic_filter)
 
                 # Raw Likert response distributions
                 plot_likert_response_distributions(
-                    df_raw=df_raw, theta_df=theta_df_out,
-                    category_mapping=category_mapping_final, response_options=RESPONSE_OPTIONS,
-                    id_var=ID_VAR, year_col=YEAR_COL, target_year=actual_years_final[-1],
-                    output_dir=OUTPUT_DIR, target_dept=None
-                )
+                    df_raw=df_raw,
+                    theta_df=theta_df_out,
+                    category_mapping=category_mapping_final,
+                    response_options=RESPONSE_OPTIONS,
+                    id_var=ID_VAR,
+                    year_col=YEAR_COL,
+                    target_year=actual_years_final[-1],
+                    output_dir=OUTPUT_DIR,
+                    target_dept=None)
 
                 # Standardized capability distribution ridge curves (Matching your visual template)
                 plot_team_ridge_plots(
-                    idata=idata, theta_df=theta_df_out,
-                    category_name=cat_name, output_dir=OUTPUT_DIR,
-                    target_dept=None
-                )
+                    idata=idata,
+                    theta_df=theta_df_out,
+                    category_name=cat_name,
+                    output_dir=OUTPUT_DIR,
+                    target_dept=None)
 
                 # Standardized capability distribution ridge curves (Department filtered)
                 plot_team_ridge_plots(
-                    idata=idata, theta_df=theta_df_out,
-                    category_name=cat_name, output_dir=OUTPUT_DIR,
-                    target_dept=demographic_filter
-                )
+                    idata=idata,
+                    theta_df=theta_df_out,
+                    category_name=cat_name,
+                    output_dir=OUTPUT_DIR,
+                    target_dept=demographic_filter)
 
                 # Item-level IRT functions for each question in this category
                 for q_id in category_mapping_final[cat_name]:
                     plot_category_response_functions(q_id, idata, question_idx_map, OUTPUT_DIR)
-                    plot_predicted_vs_empirical_dist(q_id,
-                                                     idata,
-                                                     df_long,
-                                                     question_idx_map,
-                                                     OUTPUT_DIR,
-                                                     question_to_dimension_pymc)
+                    plot_predicted_vs_empirical_dist(question_id=q_id,
+                                                     idata=idata,
+                                                     df_long=df_long,
+                                                     question_idx_map=question_idx_map,
+                                                     output_dir=OUTPUT_DIR,
+                                                     question_to_dimension_pymc=question_to_dimension_pymc)
                     plot_item_information_function(q_id, idata, question_idx_map, OUTPUT_DIR)
 
         # Plot Clustermap with reversed colors
@@ -1236,6 +1295,28 @@ def main():
             print("Saved MCMC parameter trace plots to trace_plots.png")
         except Exception as e:
             print(f"Skipped Trace Plot generation: {e}")
+
+    # Optional: Compare Estimated Parameters to True Simulation Parameters
+    if RUN_SIMULATION and true_params is not None:
+        print("\n--- Parameter Recovery Report (Ground Truth Verification) ---")
+        # mu comparison
+        est_mu = posterior_means["mu"].values.flatten()
+        true_mu_vals = true_params['true_mu']
+        mu_mae = np.mean(np.abs(est_mu - true_mu_vals))
+        print(f"  mu (Global Means) Recovery MAE: {mu_mae:.4f}")
+
+        # sigma comparison
+        est_sigma = sigma_means_val
+        true_sigma_vals = true_params['true_sigma']
+        sigma_mae = np.mean(np.abs(est_sigma - true_sigma_vals))
+        print(f"  sigma (Global SDs) Recovery MAE: {sigma_mae:.4f}")
+
+        # item discrimination (a) comparison
+        est_a = posterior_means["a"].values
+        true_a_vals = np.array([true_params['true_a'][q] for q in questions_to_use])
+        a_mae = np.mean(np.abs(est_a - true_a_vals))
+        print(f"  a (Item Discrimination) Recovery MAE: {a_mae:.4f}")
+        print("Note: Parameters successfully recovered from generated ground truth data.")
 
     print(f'{(datetime.datetime.now() - T_START).total_seconds()} total seconds elapsed')
 

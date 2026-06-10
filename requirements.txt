@@ -12,7 +12,7 @@ fastprogress
 numba
 numpyro
 jax
-#conda install mkl mkl-service
+#conda install mkl mkl-service openblas pytensor  --update-all
 
 scipy-stubs
 pandas-stubs
