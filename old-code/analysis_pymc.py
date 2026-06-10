@@ -71,7 +71,7 @@ LOW_DISCRIMINATION_THRESHOLD = 0.3
 MIN_RESPONSES_PER_GROUP = 5
 
 # --- File Paths & Schema ---
-OUTPUT_DIR = 'dora_analysis_output_pymc'
+OUTPUT_DIR = '../dora_analysis_output_pymc'
 YEAR_COL = 'year'
 ID_VAR = 'team_id'
 
