@@ -14,6 +14,7 @@ from typing import Dict
 from typing import Tuple
 
 import arviz as az
+import numpy as np
 import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
@@ -135,7 +136,7 @@ def build_and_run_model(
         # --- GraphViz DAG Export ---
         try:
             g = pm.model_to_graphviz(dora_hmgrm)
-            g.render(filename=os.path.join(config.OUTPUT_DIR, 'model_dag'), format='png', cleanup=True)
+            g.render(filename=os.path.join(config.MODEL_DIR, 'model_dag'), format='png', cleanup=True)
             print("  Successfully saved Model DAG representation to model_dag.png")
         except Exception as e:
             print(f"  [SKIPPED] GraphViz DAG representation (Install graphviz system binaries): {e}")

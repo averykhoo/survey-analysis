@@ -125,9 +125,9 @@ def run_diagnostic_checks(
             )
             # Save khat diagnostic graph
             az.plot_khat(loo_results, threshold=config.PARETO_K_THRESHOLD)
-            plt.savefig(os.path.join(config.OUTPUT_DIR, "looic_pareto_k_diagnostic.png"), bbox_inches="tight")
+            plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "looic_pareto_k_diagnostic.png"), bbox_inches="tight")
             plt.close()
-            print("  Saved LOOIC Pareto k diagnostic plot to 'looic_pareto_k_diagnostic.png'.")
+            print("  Saved LOOIC Pareto k diagnostic plot to diagnostics/looic_pareto_k_diagnostic.png.")
     except Exception as e:
         print(f"  [SKIPPED] LOOIC calculations skipped: {e}")
 

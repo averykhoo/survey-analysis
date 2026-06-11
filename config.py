@@ -12,8 +12,17 @@ from typing import List
 
 # --- General Run Settings ---
 RANDOM_SEED: int = 42
-OUTPUT_DIR: str = "dora_analysis_output_pymc"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+BASE_DIR: str = "dora_analysis_output_pymc"
+
+# --- Compartmentalized Subdirectories ---
+MODEL_DIR: str = os.path.join(BASE_DIR, "model")
+DIAGNOSTICS_DIR: str = os.path.join(BASE_DIR, "diagnostics")
+CSV_DIR: str = os.path.join(BASE_DIR, "estimates_csv")
+PLOTS_DIR: str = os.path.join(BASE_DIR, "plots")
+
+# Auto-generate folder structure on system load
+for d in [MODEL_DIR, DIAGNOSTICS_DIR, CSV_DIR, PLOTS_DIR]:
+    os.makedirs(d, exist_ok=True)
 
 # --- MCMC Sampler Configurations ---
 ITER_WARMUP: int = 1000
