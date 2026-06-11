@@ -2,8 +2,8 @@
 """
 config.py
 
-Holds all global constants, directory targets, mapping tables,
-and statistical thresholds for the DORA survey capability analysis.
+Holds all global constants, directory targets, hierarchical mapping tables,
+and statistical thresholds for the hierarchical DORA survey capability analysis.
 """
 
 import os
@@ -19,14 +19,14 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 ITER_WARMUP: int = 1000
 ITER_SAMPLING: int = 1500
 CHAINS: int = 4
-TARGET_ACCEPT: float = 0.95  # Raised to 0.95 to resolve divergent transitions
+TARGET_ACCEPT: float = 0.95  # High target accept to prevent divergent transitions
 
 # --- Statistical Diagnostic Thresholds ---
 RHAT_THRESHOLD: float = 1.05
 NEFF_RATIO_THRESHOLD: float = 0.1  # Warning flag if ESS/total draws < 10%
-PARETO_K_THRESHOLD: float = 0.7  # Flag for highly influential/poorly fit observations
+PARETO_K_THRESHOLD: float = 0.7  # For LOOIC diagnostic plotting [1]
 LOW_DISCRIMINATION_THRESHOLD: float = 0.3
-HIGH_CORR_THRESHOLD: float = 0.85
+HIGH_CORR_THRESHOLD: float = 0.85  # Threshold for recommending merging of survey dimensions [1]
 MIN_RESPONSES_PER_GROUP: int = 5
 
 # --- Demographics & Survey Scales ---
@@ -35,25 +35,35 @@ N_CATEGORIES_RESPONSE: int = len(RESPONSE_OPTIONS)
 YEAR_COL: str = "year"
 ID_VAR: str = "team_id"
 
-# --- Category / Dimension Mapping ---
-# Maps specific question codes to latent DORA capabilities
-CATEGORY_MAPPING_INITIAL: Dict[str, List[str]] = {
-    "Deployment & Release":       ["q1", "q2", "q3"],
-    "Monitoring & Observability": ["q4", "q5"],
-    "Technical Practices":        ["q6", "q7", "q8"],
-    "Team Collaboration":         ["q9", "q10"],
-    "Process Efficiency":         ["q11"],
-    "Learning & Development":     ["q12", "q13"],
-    "System Reliability":         ["q14", "q15"],
-    "Change Management":          ["q16"]
+# --- Hierarchical Survey Map (Sections -> Categories -> Questions) ---
+SURVEY_HIERARCHY: Dict[str, Dict[str, List[str]]] = {
+    "Key Outcomes":           {
+        "Software Delivery": ["q1", "q2"],
+        "Org Performance":   ["q3", "q4"],
+        "Team Performance":  ["q5"]  # 1-question category
+    },
+    "Technical Capabilities": {
+        "Code Review":     ["q6"],  # 1-question category
+        "Security":        ["q7", "q8"],
+        "CI":              ["q9"],  # 1-question category
+        "Version Control": ["q10", "q11"]
+    },
+    "AI and I":               {
+        "AI Usage":    ["q12", "q13"],
+        "Eng Culture": ["q14", "q15"]
+    },
+    "Wellbeing":              {
+        "Flow":       ["q16"],  # 1-question category
+        "Engagement": ["q17"]  # 1-question category
+    }
 }
 
-# Categories strictly restricted to engineering personnel or groups
+# Categories strictly restricted to engineering personnel (filtered in demographics)
 ENGG_ONLY_CATEGORIES: List[str] = [
-    "Deployment & Release",
-    "Monitoring & Observability",
-    "Technical Practices",
-    "System Reliability"
+    "Software Delivery",
+    "Security",
+    "CI",
+    "Version Control"
 ]
 
 # Non-engineering teams to filter out of engineering-only plots
@@ -63,12 +73,22 @@ NON_ENGG_TEAMS: List[str] = [
     "Operations"
 ]
 
-# --- Reorganization Map (Y_Last to Y1 Parent Lineage) ---
-REORG_MAPPING_Y_LAST_TO_Y1: Dict[str, List[str]] = {
-    "Team_X": ["Team_A", "Team_B"],
-    "Team_Y": ["Team_B", "Team_C"],
-    "Team_Z": ["Team_A", "Team_C", "Team_D"],
-    "Team_E": ["Team_E"],
-    "Team_F": ["Team_F"],
-    "Team_G": []
+# --- Year-by-Year Lineage Transition Map ---
+REORG_LINEAGE_MAP: Dict[int, Dict[str, List[str]]] = {
+    2026: {
+        "Team_X": ["Team_A", "Team_B"],  # Team A and B merged to form X
+        "Team_Y": ["Team_B", "Team_C"],  # Team B and C merged to form Y
+        "Team_Z": ["Team_A", "Team_C", "Team_D"],
+        "Team_E": ["Team_E"],  # Unchanged
+        "Team_F": ["Team_F"],  # Unchanged
+        "Team_G": []  # Completely new team in 2026
+    },
+    2025: {
+        "Team_A": ["Team_A"],  # Unchanged between 2023 and 2025
+        "Team_B": ["Team_B"],
+        "Team_C": ["Team_C"],
+        "Team_D": ["Team_D"],
+        "Team_E": ["Team_E"],
+        "Team_F": ["Team_F"]
+    }
 }

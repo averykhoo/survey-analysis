@@ -2,8 +2,8 @@
 """
 data_utils.py
 
-Handles raw data loading, clean preprocessing, simulation of multi-year
-DORA survey datasets containing reorganizations, and smart initialization.
+Handles hierarchical data simulation and preprocessing, building index mappings
+and structural masks for the hierarchical IRT model. Parses multiple years of lineages.
 """
 
 from typing import Any
@@ -20,20 +20,40 @@ import config
 
 def simulate_dora_data_reorg(
         sim_years_reorg: List[int],
-        reorg_map_child_to_parents: Dict[str, List[str]],
+        lineage_map: Dict[int, Dict[str, List[str]]],
         sim_n_resp_per_team_year: int,
-        category_map_sim: Dict[str, List[str]],
+        hierarchy_map: Dict[str, Dict[str, List[str]]],
         response_options_sim: List[int]
 ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
-    Simulates a 3-year DORA survey dataset complete with team reorganizations,
-    improving capabilities, and missing entries over years.
-    """
-    year1, year2, year3 = sim_years_reorg[0], sim_years_reorg[1], sim_years_reorg[2]
+    Simulates a DORA dataset using a true two-level Section -> Category hierarchy,
+    respecting multi-year reorganization lineages.
 
-    year1_teams_sim = sorted(p for parents in reorg_map_child_to_parents.values() for p in parents)
-    year2_teams_sim = sorted(p for parents in reorg_map_child_to_parents.values() for p in parents)
-    year3_teams_sim = sorted(reorg_map_child_to_parents.keys())
+    Args:
+        sim_years_reorg: Ordered list of years to simulate (e.g. [2023, 2025, 2026]).
+        lineage_map: Year-by-year reorg transition map.
+        sim_n_resp_per_team_year: Responders to simulate per team.
+        hierarchy_map: Section/Category/Question mapping dictionary.
+        response_options_sim: Likert response integer options.
+
+    Returns:
+        Dataframe of simulated responses and Dictionary of true generative parameters.
+    """
+    rng = np.random.default_rng(config.RANDOM_SEED)
+
+    # Determine teams active per year based on the lineage chaining
+    teams_per_year = {}
+    for i, yr in enumerate(sim_years_reorg):
+        if yr in lineage_map:
+            teams_per_year[yr] = list(lineage_map[yr].keys())
+        else:
+            # First year derives from the parent values of the subsequent year
+            if i + 1 < len(sim_years_reorg) and sim_years_reorg[i + 1] in lineage_map:
+                next_yr = sim_years_reorg[i + 1]
+                parents = {p for plist in lineage_map[next_yr].values() for p in plist}
+                teams_per_year[yr] = sorted(list(parents))
+            else:
+                teams_per_year[yr] = ["Team_A", "Team_B"]  # Fallback
 
     team_to_dept = {
         "Team_A": "Engineering", "Team_B": "Engineering", "Team_X": "Engineering",
@@ -41,243 +61,195 @@ def simulate_dora_data_reorg(
         "Team_Z": "Product", "Team_E": "Operations", "Team_F": "Operations", "Team_G": "Marketing"
     }
 
-    rng = np.random.default_rng(config.RANDOM_SEED)
-    n_cats_response_sim = len(response_options_sim)
-    n_latent_sim = len(category_map_sim)
-    questions_sim = [q for qs in category_map_sim.values() for q in qs]
-    question_categories_sim = {q: idx for idx, (cat, qs) in enumerate(category_map_sim.items(), 1) for q in qs}
+    # Flatten hierarchy
+    sections = list(hierarchy_map.keys())
+    categories = []
+    cat_to_sec = {}
+    questions = []
+    cat_questions = {}
 
+    for sec, cats in hierarchy_map.items():
+        for cat, qs in cats.items():
+            categories.append(cat)
+            cat_to_sec[cat] = sec
+            questions.extend(qs)
+            cat_questions[cat] = qs
+
+    S = len(sections)
+    C = len(categories)
+
+    # 1. Simulate true section correlation matrix
     base_corr = 0.4
-    corr_matrix = np.ones((n_latent_sim, n_latent_sim)) * base_corr
+    corr_matrix = np.ones((S, S)) * base_corr
     np.fill_diagonal(corr_matrix, 1.0)
-    noise = rng.uniform(-0.2, 0.2, (n_latent_sim, n_latent_sim))
+    noise = rng.uniform(-0.1, 0.1, (S, S))
     noise = (noise + noise.T) / 2
     np.fill_diagonal(noise, 0.0)
-    true_Omega = np.clip(corr_matrix + noise, 0.05, 0.95)
-    np.fill_diagonal(true_Omega, 1.0)
+    true_Omega_sec = np.clip(corr_matrix + noise, 0.1, 0.9)
+    np.fill_diagonal(true_Omega_sec, 1.0)
 
-    true_mu = rng.normal(0, 0.2, n_latent_sim)
-    true_sigma = rng.lognormal(-0.5, 0.2, n_latent_sim)
-    cov_matrix = np.diag(true_sigma) @ true_Omega @ np.diag(true_sigma)
+    # 2. Simulate latent section values mapped cleanly across lineages
+    true_latent_sec = {}
 
-    def generate_correlated_traits(mean_vector, cov_matrix):
-        return rng.multivariate_normal(mean_vector, cov_matrix)
+    def generate_correlated_sec_traits():
+        return rng.multivariate_normal(np.zeros(S), true_Omega_sec)
 
-    true_latent_y1 = {}
-    latent_for_resp = {}
-    for team in year1_teams_sim:
-        team_base_mean_offset = rng.normal(0, 0.4)
-        mean_vector = true_mu + team_base_mean_offset
-        traits_y1 = generate_correlated_traits(mean_vector, cov_matrix)
-        true_latent_y1[team] = traits_y1
-        for cat_idx in range(1, n_latent_sim + 1):
-            latent_for_resp[(team, year1, cat_idx)] = traits_y1[cat_idx - 1]
-
-    true_latent_y2 = {}
-    for team in year2_teams_sim:
-        y1_traits = true_latent_y1.get(team, true_mu)
-        improvements = rng.normal(0.2, 0.1, n_latent_sim)
-        traits_y2 = y1_traits + improvements
-        true_latent_y2[team] = traits_y2
-        for cat_idx in range(1, n_latent_sim + 1):
-            latent_for_resp[(team, year2, cat_idx)] = traits_y2[cat_idx - 1]
-
-    true_latent_y3 = {}
-    for child_team in year3_teams_sim:
-        parent_teams = reorg_map_child_to_parents.get(child_team, [])
-        if not parent_teams:
-            team_base_mean_offset = rng.normal(0, 0.4)
-            mean_vector = true_mu + team_base_mean_offset
-            traits_y3 = generate_correlated_traits(mean_vector, cov_matrix)
-        else:
-            parent_thetas = [true_latent_y2.get(p_team) for p_team in parent_teams if p_team in true_latent_y2]
-            if not parent_thetas:
-                team_base_mean_offset = rng.normal(0, 0.4)
-                mean_vector = true_mu + team_base_mean_offset
-                traits_y3 = generate_correlated_traits(mean_vector, cov_matrix)
+    for i, yr in enumerate(sim_years_reorg):
+        for team in teams_per_year[yr]:
+            if i == 0 or yr not in lineage_map or not lineage_map[yr].get(team):
+                # New origin team
+                true_latent_sec[(team, yr)] = generate_correlated_sec_traits()
             else:
-                avg_parent_theta = np.mean(np.array(parent_thetas), axis=0)
-                category_improvement_mean = 0.3
-                improvements = rng.normal(category_improvement_mean, 0.2, n_latent_sim)
-                traits_y3 = avg_parent_theta + improvements
-        true_latent_y3[child_team] = traits_y3
-        for cat_idx in range(1, n_latent_sim + 1):
-            latent_for_resp[(child_team, year3, cat_idx)] = traits_y3[cat_idx - 1]
+                # Evolving team: Inherit mean of parents + improvement
+                parents = lineage_map[yr][team]
+                prev_yr = sim_years_reorg[i - 1]
+                parent_thetas = [true_latent_sec[(p, prev_yr)] for p in parents if (p, prev_yr) in true_latent_sec]
 
-    true_latent_combined = {(team, year1): traits for team, traits in true_latent_y1.items()}
-    true_latent_combined.update({(team, year2): traits for team, traits in true_latent_y2.items()})
-    true_latent_combined.update({(team, year3): traits for team, traits in true_latent_y3.items()})
+                if parent_thetas:
+                    avg_parent = np.mean(np.array(parent_thetas), axis=0)
+                    true_latent_sec[(team, yr)] = avg_parent + rng.normal(0.2, 0.1, S)
+                else:
+                    true_latent_sec[(team, yr)] = generate_correlated_sec_traits()
 
-    true_a = {q: rng.lognormal(-0.1, 0.4) for q in questions_sim}
+    # 3. Simulate Category Offsets (independent relative to parent Section)
+    true_latent_cat = {}
+    for (team, yr), sec_traits in true_latent_sec.items():
+        cat_traits = np.zeros(C)
+        for c_idx, cat in enumerate(categories):
+            s_idx = sections.index(cat_to_sec[cat])
+            sec_base = sec_traits[s_idx]
+
+            # If multi-question, add category deviation. If 1-question, force deviation to 0
+            deviation = rng.normal(0, 0.3) if len(cat_questions[cat]) > 1 else 0.0
+            cat_traits[c_idx] = sec_base + deviation
+        true_latent_cat[(team, yr)] = cat_traits
+
+    # 4. Simulate Question IRT Parameters
+    true_a = {q: rng.lognormal(-0.1, 0.4) for q in questions}
     true_cutpoints = {}
-    for q in questions_sim:
+    for q in questions:
         item_difficulty = rng.normal(0, 0.7)
-        num_cutpoints = n_cats_response_sim - 1
-        spacings = np.maximum(rng.lognormal(0, 0.3, num_cutpoints), 0.3)
+        spacings = np.maximum(rng.lognormal(0, 0.3, len(response_options_sim) - 1), 0.3)
         raw_cutpoints = np.cumsum(spacings)
         centered_cutpoints = raw_cutpoints - np.mean(raw_cutpoints) + item_difficulty
         true_cutpoints[q] = np.sort(centered_cutpoints)
 
-    def simulate_response_gr(theta_val, a, cutpoints, response_options_sim):
+    def simulate_response_gr(theta_val, a, cutpoints):
         eta = a * theta_val
         cum_prob_le = sps.expit(cutpoints - eta)
-        n_cats_sim = len(response_options_sim)
-        probs = np.zeros(n_cats_sim)
+        probs = np.zeros(len(response_options_sim))
         probs[0] = cum_prob_le[0]
-        for k in range(1, n_cats_sim - 1):
+        for k in range(1, len(response_options_sim) - 1):
             probs[k] = cum_prob_le[k] - cum_prob_le[k - 1]
-        probs[n_cats_sim - 1] = 1.0 - cum_prob_le[n_cats_sim - 2]
+        probs[-1] = 1.0 - cum_prob_le[-2]
         probs = np.maximum(probs, 1e-9)
         probs /= probs.sum()
         return rng.choice(response_options_sim, p=probs)
 
     data = []
-    for year in sim_years_reorg:
-        teams_in_year = year1_teams_sim if year == year1 else (year2_teams_sim if year == year2 else year3_teams_sim)
-        for team in teams_in_year:
-            if (team, year) not in true_latent_combined:
-                continue
+    for yr in sim_years_reorg:
+        for team in teams_per_year[yr]:
             for _ in range(sim_n_resp_per_team_year):
-                row = {config.YEAR_COL: year, config.ID_VAR: team, "dept": team_to_dept.get(team, "Other")}
-                for q in questions_sim:
-                    cat = question_categories_sim[q]
-                    theta_key = (team, year, cat)
-                    if theta_key in latent_for_resp:
-                        theta_true = latent_for_resp[theta_key]
-                        a_val = true_a[q]
-                        cp_val = true_cutpoints[q]
-                        if year in [year1, year2] and q in ["q14", "q15", "q16"]:
-                            row[q] = np.nan
-                        elif rng.random() < 0.05:
-                            row[q] = np.nan
-                        else:
-                            row[q] = simulate_response_gr(theta_true, a_val, cp_val, response_options_sim)
-                    else:
+                row = {config.YEAR_COL: yr, config.ID_VAR: team, "dept": team_to_dept.get(team, "Other")}
+                for q in questions:
+                    parent_cat = [c for c, qs in cat_questions.items() if q in qs][0]
+                    c_idx = categories.index(parent_cat)
+
+                    theta_true = true_latent_cat[(team, yr)][c_idx]
+
+                    if rng.random() < 0.05:
                         row[q] = np.nan
+                    else:
+                        row[q] = simulate_response_gr(theta_true, true_a[q], true_cutpoints[q])
                 data.append(row)
 
     df = pd.DataFrame(data)
-    true_params = {
-        "true_a":         true_a,
-        "true_cutpoints": true_cutpoints,
-        "true_Omega":     true_Omega,
-        "true_latent":    true_latent_combined,
-        "true_mu":        true_mu,
-        "true_sigma":     true_sigma,
-    }
+    true_params = {"true_a": true_a, "true_cutpoints": true_cutpoints, "true_Omega_sec": true_Omega_sec}
     return df, true_params
 
 
-def load_and_preprocess_data(df_raw: pd.DataFrame) -> Tuple[
-    pd.DataFrame, Dict[str, List[str]], Dict[str, int], Dict[int, str], Dict[str, int]]:
+def load_and_preprocess_data(df_raw: pd.DataFrame, hierarchy_map: Dict[str, Dict[str, List[str]]]) -> Tuple[
+    pd.DataFrame, Dict[str, Any]]:
     """
-    Performs preprocessing, filters missing items, builds 1-based indexing
-    for PyMC compatibility, and evaluates completely dropped teams.
+    Parses structural mappings, generates indices and mapping tensors for PyMC constraints.
+
+    Args:
+        df_raw: Flat raw responses dataframe.
+        hierarchy_map: Mapping dictionary.
+
+    Returns:
+        Processed long-format DataFrame and structural tensor dictionaries for the model.
     """
-    actual_years = sorted(df_raw[config.YEAR_COL].unique())
-    actual_teams = df_raw[config.ID_VAR].unique()
-    question_to_cat_initial = {q: cat for cat, qs in config.CATEGORY_MAPPING_INITIAL.items() for q in qs}
-    actual_questions_in_data = df_raw.columns.intersection(question_to_cat_initial.keys())
+    sections_list = list(hierarchy_map.keys())
+    categories_list = []
+    questions_list = []
 
-    # Drop questions with 100% missing data in any year
-    questions_to_use = []
-    for q in actual_questions_in_data:
-        if df_raw[q].notna().any():
-            questions_to_use.append(q)
-    questions_to_use = sorted(list(set(questions_to_use)))
+    cat_to_sec_idx = []
+    is_multi_item_list = []
+    question_to_cat_idx = {}
 
-    # Reconstruct category mappings based on active items
-    category_mapping_final = {}
-    question_categories_final = {}
-    cat_idx_final = 0
-    final_cat_names = []
+    for s_idx, sec in enumerate(sections_list):
+        for cat, qs in hierarchy_map[sec].items():
+            categories_list.append(cat)
+            cat_to_sec_idx.append(s_idx)
+            is_multi_item_list.append(1.0 if len(qs) > 1 else 0.0)
 
-    for cat_name_orig, qs_orig in config.CATEGORY_MAPPING_INITIAL.items():
-        qs_in_cat_to_use = [q for q in qs_orig if q in questions_to_use]
-        if qs_in_cat_to_use:
-            category_mapping_final[cat_name_orig] = qs_in_cat_to_use
-            final_cat_names.append(cat_name_orig)
-            for q in qs_in_cat_to_use:
-                question_categories_final[q] = cat_idx_final
-            cat_idx_final += 1
+            for q in qs:
+                questions_list.append(q)
+                question_to_cat_idx[q] = len(categories_list) - 1
 
-    cat_idx_to_name_final = {idx: name for idx, name in enumerate(final_cat_names)}
-
-    # Pivot to long format
     df_long = df_raw.melt(
         id_vars=[config.YEAR_COL, config.ID_VAR, "dept"],
-        value_vars=questions_to_use,
+        value_vars=questions_list,
         var_name="question",
         value_name="response"
     ).dropna(subset=["response"])
 
-    df_long["response"] = pd.to_numeric(df_long["response"], errors="coerce").dropna().astype(int)
-    df_long = df_long[df_long["response"].isin(config.RESPONSE_OPTIONS)]
+    df_long["response"] = pd.to_numeric(df_long["response"]).astype(int)
 
-    # Dropped Teams Verification Check
-    teams_in_processed_data = df_long[config.ID_VAR].unique()
-    teams_dropped_completely = sorted(list(set(actual_teams) - set(teams_in_processed_data)))
-    if teams_dropped_completely:
-        print(f"\n[WARNING] {len(teams_dropped_completely)} teams from raw data have NO valid responses "
-              f"after filtering: {teams_dropped_completely}")
-
-    # Index Mappings
-    df_long["q_cat_final"] = df_long["question"].map(question_categories_final)
     df_long["group"] = df_long[config.ID_VAR].astype(str) + "|" + df_long[config.YEAR_COL].astype(str)
-
-    groups_final = sorted(df_long["group"].unique())
-    group_idx_map = {g: i for i, g in enumerate(groups_final)}
+    groups_list = sorted(df_long["group"].unique())
+    group_idx_map = {g: i for i, g in enumerate(groups_list)}
     df_long["group_idx"] = df_long["group"].map(group_idx_map)
 
-    question_idx_map = {q: i for i, q in enumerate(questions_to_use)}
+    question_idx_map = {q: i for i, q in enumerate(questions_list)}
     df_long["question_idx"] = df_long["question"].map(question_idx_map)
 
-    return df_long, category_mapping_final, cat_idx_to_name_final, question_idx_map, question_categories_final
+    question_to_category = np.array([question_to_cat_idx[q] for q in questions_list])
+    category_to_section = np.array(cat_to_sec_idx)
+    is_multi_item_mask = np.array(is_multi_item_list)
+
+    struct_maps = {
+        "sections":             sections_list,
+        "categories":           categories_list,
+        "questions":            questions_list,
+        "question_to_category": question_to_category,
+        "category_to_section":  category_to_section,
+        "is_multi_item_mask":   is_multi_item_mask,
+        "group_idx_map":        group_idx_map,
+        "question_idx_map":     question_idx_map
+    }
+
+    return df_long, struct_maps
 
 
-def generate_smart_init(
-        df_long: pd.DataFrame,
-        K: int,
-        C: int,
-        L: int,
-        J: int,
-        response_options: List[int]
-) -> Dict[str, np.ndarray]:
+def generate_smart_init(df_long: pd.DataFrame, K: int, C_resp: int) -> Dict[str, np.ndarray]:
     """
-    Computes data-informed empirical initial parameters for the model parameters
-    to help prevent sampling bottlenecks or initialization failures.
+    Computes data-informed starting points for ordinal cutpoints to prevent warm-up crashes.
     """
-    initial_cutpoints = np.zeros((K, C - 1))
-    probs = np.linspace(0, 1, C + 1)[1:-1]
-    grouped_q = df_long.groupby("question_idx")["response"]
+    initial_cutpoints = np.zeros((K, C_resp - 1))
+    probs = np.linspace(0, 1, C_resp + 1)[1:-1]
 
     for k in range(K):
-        q_median = np.median(df_long["response"])
-        if k in grouped_q.groups:
-            responses_k = grouped_q.get_group(k)
-            if len(responses_k) > 1:
-                q_median = np.median(responses_k)
-
         q_quantiles = np.quantile(df_long["response"], probs)
-        latent_approx = np.interp(q_quantiles, [min(response_options), max(response_options)], [-2.0, 2.0])
-        q_cuts = latent_approx - np.interp(q_median, [min(response_options), max(response_options)], [-2.0, 2.0])
-        q_cuts = np.sort(q_cuts)
-
-        # Enforce minimal spacing constraint
-        min_diff = 0.15
-        for i in range(C - 2):
-            q_cuts[i + 1] = max(q_cuts[i + 1], q_cuts[i] + min_diff)
-        initial_cutpoints[k, :] = q_cuts
+        latent_approx = np.interp(q_quantiles, [1, 6], [-1.5, 1.5])
+        initial_cutpoints[k, :] = np.sort(latent_approx)
 
     first_cut = initial_cutpoints[:, 0:1]
     cut_diffs = np.diff(initial_cutpoints, axis=1)
-    cut_diffs = np.maximum(cut_diffs, 0.05)  # Constrain strictly positive
+    cut_diffs = np.maximum(cut_diffs, 0.05)
 
     return {
-        "z":         np.zeros((L, J)),
-        "mu":        np.zeros((L, 1)),
-        "sigma":     np.ones(L) * 0.8,
-        "a":         np.ones(K),
         "first_cut": first_cut,
         "cut_diffs": cut_diffs
     }

@@ -8,7 +8,6 @@ pytensor
 scipy
 seaborn
 
-fastprogress
 numba
 numpyro
 jax

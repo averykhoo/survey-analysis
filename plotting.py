@@ -8,12 +8,13 @@ and item-level (CRF, IIF, TIF) visualizations with robust HDI bounds.
 
 import os
 import re
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
 
 import arviz as az
-import matplotlib.patches as mpatches
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -32,110 +33,134 @@ except ImportError:
 
 
 def filename_escape(text: str) -> str:
+    """Escapes strings for filesystem compliance."""
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
-def plot_reorg_slope_chart_standardized_internal(
-        theta_df: pd.DataFrame,
-        category_name: str,
+def plot_slope_chart_hierarchical(
+        df_estimates: pd.DataFrame,
+        name: str,
+        level: str,
         years: List[int],
-        mu_map: Dict[str, float],
-        sigma_map: Dict[str, float],
-        parent_to_child_map: Dict[str, List[str]],
+        lineage_map: Dict[int, Dict[str, List[str]]],
         target_dept: Optional[str] = None
 ) -> None:
     """
-    Renders standardized lineage evolution slope charts mapping reorg splits and merges.
+    Renders standardized lineage slope charts.
+
+    Marker Rules:
+      - 1 appearance total: 'x', gray
+      - Multiple appearances, hits final year: colored 'o', solid lines
+      - Multiple appearances, dies before final year: gray 'o', dashed lines
+
+    Color Rule:
+      - Rainbow spectrum (Spectral) driven by value in their FINAL year of appearance.
+      - Red maps to lowest score, Blue/Purple to highest score.
     """
-    df_plot = theta_df.copy()
+    df_plot = df_estimates.copy()
     if target_dept is not None:
         df_plot = df_plot[df_plot["dept"] == target_dept]
 
-    pop_mean = mu_map.get(category_name)
-    pop_sd = sigma_map.get(category_name)
-
-    if pop_mean is None or pop_sd is None or pop_sd <= 1e-6 or df_plot.empty:
-        return
-
-    raw_col = f"theta_{category_name}_z"
-    if raw_col not in df_plot.columns:
+    val_col = f"{level}_{name}"
+    if val_col not in df_plot.columns or df_plot.empty:
         return
 
     available_years = sorted([y for y in years if y in df_plot[config.YEAR_COL].unique()])
     if len(available_years) < 2:
         return
 
-    fig, ax = plt.subplots(figsize=(12, 8))
+    fig, ax = plt.subplots(figsize=(13, 8))
     texts = []
-    plotted_coords = {y: {} for y in available_years}
-    team_year_counts = df_plot.groupby(config.ID_VAR)[config.YEAR_COL].nunique().to_dict()
 
-    latest_year = available_years[-1]
-    df_latest = df_plot[df_plot[config.YEAR_COL] == latest_year].set_index(config.ID_VAR)
-    sorted_latest_teams = df_latest[raw_col].sort_values(ascending=False).index.tolist()
-
-    cmap_registry = plt.colormaps["Spectral"].resampled(max(1, len(sorted_latest_teams)))
-    color_map_y_last = {team: cmap_registry(i) for i, team in enumerate(sorted_latest_teams)}
-
-    for idx, yr in enumerate(available_years):
+    coords = {y: {} for y in available_years}
+    for yr in available_years:
         df_yr = df_plot[df_plot[config.YEAR_COL] == yr].set_index(config.ID_VAR)
         for team_id, row in df_yr.iterrows():
-            val_z = row[raw_col]
-            if pd.notna(val_z):
-                plotted_coords[yr][team_id] = val_z
-                align = "right" if idx == 0 else "left"
-                offset = -0.05 if idx == 0 else 0.05
+            if pd.notna(row[val_col]):
+                coords[yr][team_id] = row[val_col]
 
-                if team_year_counts.get(team_id, 0) == 1:
-                    ax.plot(yr, val_z, "x", color="gray", markersize=8, mew=2)
-                    texts.append(ax.text(yr + offset, val_z, f"{team_id} (New)", ha=align, va="center", fontsize=8,
-                                         color="gray"))
+    all_teams = set()
+    for y_dict in coords.values():
+        all_teams.update(y_dict.keys())
+
+    team_meta = {}
+    for team in all_teams:
+        active_years = [y for y in available_years if team in coords[y]]
+        final_yr = max(active_years)
+        team_meta[team] = {
+            "active_years": active_years,
+            "final_yr":     final_yr,
+            "final_score":  coords[final_yr][team]
+        }
+
+    final_year_overall = available_years[-1]
+
+    # Map terminal scores to a Spectral Colormap (Lowest -> Red, Highest -> Blue)
+    scores = [m["final_score"] for m in team_meta.values()]
+    vmin, vmax = min(scores), max(scores)
+    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+    cmap = plt.cm.get_cmap("Spectral")
+
+    team_colors = {team: cmap(norm(m["final_score"])) for team, m in team_meta.items()}
+
+    # Plot Nodes
+    for yr in available_years:
+        for team, val in coords[yr].items():
+            meta = team_meta[team]
+            offset = -0.05 if yr == available_years[0] else 0.05
+            align = "right" if yr == available_years[0] else "left"
+
+            if len(meta["active_years"]) == 1:
+                ax.plot(yr, val, "x", color="gray", markersize=7, mew=2)
+                texts.append(
+                    ax.text(yr + offset, val, f"{team} (1-Yr)", ha=align, va="center", fontsize=8, color="gray"))
+            else:
+                if meta["final_yr"] == final_year_overall:
+                    ax.plot(yr, val, "o", color=team_colors[team], markersize=6)
+                    texts.append(ax.text(yr + offset, val, team, ha=align, va="center", fontsize=8))
                 else:
-                    pt_color = color_map_y_last.get(team_id, "gray") if yr == latest_year else "gray"
-                    ax.plot(yr, val_z, "o", color=pt_color, markersize=6)
-                    texts.append(ax.text(yr + offset, val_z, team_id, ha=align, va="center", fontsize=8))
+                    ax.plot(yr, val, "o", color="gray", markersize=6)
+                    texts.append(ax.text(yr + offset, val, team, ha=align, va="center", fontsize=8, color="gray"))
 
-    # Connect nodes backward tracing lineage
-    for latest_team in sorted_latest_teams:
-        team_color = color_map_y_last[latest_team]
-        parents = [parent for parent, children in parent_to_child_map.items() if latest_team in children]
-        if not parents:
-            parents = [latest_team]
+    # Plot Lineages
+    for idx in range(len(available_years) - 1, 0, -1):
+        y_to = available_years[idx]
+        y_from = available_years[idx - 1]
 
-        for p_idx, p in enumerate(parents):
-            y_to = available_years[-1]
-            y_from = available_years[-2]
-            if p in plotted_coords[y_from] and latest_team in plotted_coords[y_to]:
-                line_style = "-" if p_idx == 0 else "--"
-                ax.plot([y_from, y_to], [plotted_coords[y_from][p], plotted_coords[y_to][latest_team]],
-                        linestyle=line_style, lw=2.5, color=team_color, alpha=0.7)
+        yr_mapping = lineage_map.get(y_to, {})
+        for child_team, parents in yr_mapping.items():
+            if child_team in coords[y_to]:
+                val_to = coords[y_to][child_team]
 
-                if len(available_years) > 2:
-                    y_prev = available_years[-3]
-                    if p in plotted_coords[y_prev]:
-                        ax.plot([y_prev, y_from], [plotted_coords[y_prev][p], plotted_coords[y_from][p]],
-                                linestyle=line_style, lw=1.5, color=team_color, alpha=0.7)
+                if team_meta[child_team]["final_yr"] == final_year_overall:
+                    line_color = team_colors[child_team]
+                    base_style = "-"
+                else:
+                    line_color = "gray"
+                    base_style = "--"
+
+                for p_idx, parent_team in enumerate(parents):
+                    if parent_team in coords[y_from]:
+                        val_from = coords[y_from][parent_team]
+                        style = base_style if p_idx == 0 else ":"
+                        ax.plot([y_from, y_to], [val_from, val_to], linestyle=style, lw=2.5, color=line_color,
+                                alpha=0.75)
 
     if HAS_ADJUST_TEXT and texts:
-        adjust_text(
-            texts, ax=ax, force_points=(0.2, 0.3),
-            arrowprops=dict(arrowstyle="-", connectionstyle="arc3,rad=0", color="gray", lw=0.5, shrinkA=3, shrinkB=3)
-        )
+        adjust_text(texts, ax=ax, force_points=(0.2, 0.3), arrowprops=dict(arrowstyle="-", color="gray", lw=0.5))
 
-    title_suffix = f" - {target_dept}" if target_dept else ""
-    years_str = " - ".join(map(str, available_years))
-    ax.set_title(f"Standardized Capability Evolution: {category_name} ({years_str}){title_suffix}", fontsize=14,
-                 weight="bold")
-    ax.set_xlabel("Year", fontsize=12)
-    ax.set_ylabel("Capability Z-Score (Std. Devs from Mean)", fontsize=12)
+    title_suffix = f" ({target_dept})" if target_dept else ""
+    ax.set_title(f"Standardized {level.capitalize()} Evolution: {name}{title_suffix}", fontsize=13, weight="bold")
+    ax.set_xlabel("Year", fontsize=11)
+    ax.set_ylabel("Standardized Score (St. Devs from Mean)", fontsize=11)
     ax.set_xticks(available_years)
-    ax.grid(True, axis="y", linestyle="--", alpha=0.6)
-    ax.axhline(0, color="gray", linestyle="-", linewidth=1.0, alpha=0.8)
+    ax.grid(True, axis="y", linestyle="--", alpha=0.5)
+    ax.axhline(0, color="black", linestyle="-", linewidth=1.0, alpha=0.5)
     ax.set_xlim(available_years[0] - 0.4, available_years[-1] + 0.4)
 
     suffix = f"_{filename_escape(target_dept)}" if target_dept else ""
-    filepath = os.path.join(config.OUTPUT_DIR, f"std_reorg_slope_{filename_escape(category_name)}{suffix}.png")
-    plt.savefig(filepath, bbox_inches="tight")
+    filename = f"{level}_{filename_escape(name)}{suffix}.png"
+    plt.savefig(os.path.join(config.OUTPUT_DIR, filename), bbox_inches="tight")
     plt.close()
 
 
@@ -153,25 +178,26 @@ def plot_omega_clustermap(corr_df: pd.DataFrame) -> None:
             vmin=-1, vmax=1, center=0, annot=(n_cats <= 12), fmt=".2f",
             linewidths=.5, linecolor="lightgray", figsize=figsize
         )
-        cluster_grid.figure.suptitle("Capability Correlations (Mean Omega)", y=1.02)
+        cluster_grid.figure.suptitle("Hierarchical Clustermap of Dimensions (Mean Omega)", y=1.02, weight="bold")
         plt.savefig(os.path.join(config.OUTPUT_DIR, "omega_clustermap.png"), bbox_inches="tight")
         plt.close()
+        print("  Successfully plotted Omega hierarchical clustermap.")
     except Exception as e:
-        print(f"  [ERROR] Heatmap clustering failed: {e}")
+        print(f"  [SKIPPED] Heatmap clustering failed: {e}")
 
 
 def plot_likert_response_distributions(
         df_raw: pd.DataFrame,
-        theta_df: pd.DataFrame,
-        category_mapping: Dict[str, List[str]],
+        df_estimates: pd.DataFrame,
+        category: str,
+        questions: List[str],
         target_year: int,
         target_dept: Optional[str] = None
 ) -> None:
     """
     Renders horizontal stacked response distributions sorted by team latent capabilities.
-    Applies demographic filters to drop non-engineering departments from designated domains.
     """
-    df_overall = theta_df[theta_df[config.YEAR_COL] == target_year]
+    df_overall = df_estimates[df_estimates[config.YEAR_COL] == target_year]
     df_responses = df_raw[df_raw[config.YEAR_COL] == target_year]
 
     if target_dept:
@@ -184,202 +210,160 @@ def plot_likert_response_distributions(
     cmap = plt.colormaps["vlag"].resampled(len(config.RESPONSE_OPTIONS))
     colors = [cmap(r - 1) for r in config.RESPONSE_OPTIONS[::-1]]
 
-    for category, questions in category_mapping.items():
-        # Clean & melt data
-        df_long_cat = df_responses.melt(
-            id_vars=[config.ID_VAR, "dept"],
-            value_vars=questions,
-            var_name="question",
-            value_name="response"
-        ).dropna()
+    # Clean & melt data
+    df_long_cat = df_responses.melt(
+        id_vars=[config.ID_VAR, "dept"],
+        value_vars=questions,
+        var_name="question",
+        value_name="response"
+    ).dropna()
 
-        if df_long_cat.empty:
-            continue
+    if df_long_cat.empty:
+        return
 
-        df_long_cat["response"] = pd.to_numeric(df_long_cat["response"], errors="coerce")
-        df_long_cat = df_long_cat[df_long_cat["response"].isin(config.RESPONSE_OPTIONS)]
-        df_long_cat["response"] = df_long_cat["response"].astype(int)
+    df_long_cat["response"] = pd.to_numeric(df_long_cat["response"]).astype(int)
+    df_long_cat = df_long_cat[df_long_cat["response"].isin(config.RESPONSE_OPTIONS)]
 
-        # Drop non-engineering groups from designated categories
-        if category in config.ENGG_ONLY_CATEGORIES:
-            df_long_cat = df_long_cat[~df_long_cat["dept"].isin(config.NON_ENGG_TEAMS)]
+    # Drop non-engineering groups from designated categories
+    if category in config.ENGG_ONLY_CATEGORIES:
+        df_long_cat = df_long_cat[~df_long_cat["dept"].isin(config.NON_ENGG_TEAMS)]
 
-        if df_long_cat.empty:
-            continue
+    if df_long_cat.empty:
+        return
 
-        counts = df_long_cat.groupby([config.ID_VAR, "response"]).size().unstack(fill_value=0)
-        percentages = counts.div(counts.sum(axis=1), axis=0) * 100
+    counts = df_long_cat.groupby([config.ID_VAR, "response"]).size().unstack(fill_value=0)
+    percentages = counts.div(counts.sum(axis=1), axis=0) * 100
 
-        theta_col = f"theta_{category}_z"
-        if theta_col in df_overall.columns:
-            ordered_teams = df_overall.sort_values(by=theta_col, ascending=True)[config.ID_VAR].tolist()
-        else:
-            ordered_teams = percentages.index.tolist()
+    theta_col = f"category_{category}"
+    if theta_col in df_overall.columns:
+        ordered_teams = df_overall.sort_values(by=theta_col, ascending=True)[config.ID_VAR].tolist()
+    else:
+        ordered_teams = percentages.index.tolist()
 
-        final_order = [t for t in ordered_teams if t in percentages.index]
-        if not final_order:
-            continue
+    final_order = [t for t in ordered_teams if t in percentages.index]
+    if not final_order:
+        return
 
-        plot_df = percentages.reindex(index=final_order, columns=config.RESPONSE_OPTIONS[::-1], fill_value=0)
+    plot_df = percentages.reindex(index=final_order, columns=config.RESPONSE_OPTIONS[::-1], fill_value=0)
 
-        fig_height = max(5, len(plot_df) * 0.6)
-        fig, ax = plt.subplots(figsize=(11, fig_height))
-        plot_df.plot(kind="barh", stacked=True, color=colors, edgecolor="white", linewidth=0.5, ax=ax)
+    fig_height = max(5, len(plot_df) * 0.6)
+    fig, ax = plt.subplots(figsize=(11, fig_height))
+    plot_df.plot(kind="barh", stacked=True, color=colors, edgecolor="white", linewidth=0.5, ax=ax)
 
-        title_suffix = f" - {target_dept}" if target_dept else ""
-        ax.set_title(f"{category} ({target_year}){title_suffix}\nTeam Response Distribution (Sorted by Rank)\n",
-                     fontsize=13, weight="bold")
-        ax.set_xlabel("Percentage of Responses", fontsize=11)
-        ax.set_ylabel("Team (Ranked bottom to top)", fontsize=11)
-        ax.set_xlim([0, 100])
-        ax.legend(config.RESPONSE_OPTIONS[::-1], title="Response", loc="upper center", bbox_to_anchor=(0.5, -0.15),
-                  ncol=len(config.RESPONSE_OPTIONS), frameon=False)
+    title_suffix = f" - {target_dept}" if target_dept else ""
+    ax.set_title(f"{category} ({target_year}){title_suffix}\nTeam Response Distribution (Sorted by Rank)\n",
+                 fontsize=13, weight="bold")
+    ax.set_xlabel("Percentage of Responses", fontsize=11)
+    ax.set_ylabel("Team (Ranked bottom to top)", fontsize=11)
+    ax.set_xlim([0, 100])
+    ax.legend(config.RESPONSE_OPTIONS[::-1], title="Response", loc="upper center", bbox_to_anchor=(0.5, -0.15),
+              ncol=len(config.RESPONSE_OPTIONS), frameon=False)
 
-        for idx, (team, row) in enumerate(plot_df.iterrows()):
-            start_pos = 0.0
-            for j, val in enumerate(row):
-                if val > 3.5:
-                    text_color = "white" if j in (0, len(config.RESPONSE_OPTIONS) - 1) else "black"
-                    ax.text(start_pos + val / 2, idx, f"{val:.0f}%", va="center", ha="center", color=text_color,
-                            fontsize=9)
-                start_pos += val
+    for idx, (team, row) in enumerate(plot_df.iterrows()):
+        start_pos = 0.0
+        for j, val in enumerate(row):
+            if val > 3.5:
+                text_color = "white" if j in (0, len(config.RESPONSE_OPTIONS) - 1) else "black"
+                ax.text(start_pos + val / 2, idx, f"{val:.0f}%", va="center", ha="center", color=text_color,
+                        fontsize=9)
+            start_pos += val
 
-        suffix = f"_{filename_escape(target_dept)}" if target_dept else ""
-        filepath = os.path.join(config.OUTPUT_DIR, f"likert_{filename_escape(category)}{suffix}.png")
-        plt.savefig(filepath, bbox_inches="tight")
-        plt.close(fig)
+    suffix = f"_{filename_escape(target_dept)}" if target_dept else ""
+    filepath = os.path.join(config.OUTPUT_DIR, f"likert_{filename_escape(category)}{suffix}.png")
+    plt.savefig(filepath, bbox_inches="tight")
+    plt.close()
 
 
-def plot_team_ridge_plots(
+def plot_ridge_plots_hierarchical(
         idata: az.InferenceData,
-        theta_df: pd.DataFrame,
-        category_name: str,
+        df_estimates: pd.DataFrame,
+        name: str,
+        level: str,
+        idx: int,
         target_dept: Optional[str] = None
 ) -> None:
     """
-    Renders posterior densities for team capabilities styled as stacked ridge curves.
-    Standardized post-hoc using stable global posterior means to prevent flat curves
-    caused by near-zero sigma division in individual MCMC draws.
+    Posterior capabilities density ridge plots for Sections or Categories.
     """
-    df_plot = theta_df.copy()
+    df_plot = df_estimates.copy()
     if target_dept is not None:
         df_plot = df_plot[df_plot["dept"] == target_dept]
 
     if df_plot.empty:
         return
 
-    cat_names = list(config.CATEGORY_MAPPING_INITIAL.keys())
-    if category_name not in cat_names:
-        return
-    cat_idx = cat_names.index(category_name)
-
-    # 1. Extract raw posterior samples of theta: shape (samples, group, category)
-    theta_samples = idata.posterior["theta"].stack(samples=["chain", "draw"]).values
-    theta_samples = theta_samples.transpose(2, 0, 1)
-
-    # 2. Extract stable global posterior means for mu and sigma to safely scale post-hoc
-    mu_mean = idata.posterior["mu"].mean(dim=["chain", "draw"]).values.flatten()[cat_idx]
-    sigma_mean = idata.posterior["sigma"].mean(dim=["chain", "draw"]).values.flatten()[cat_idx]
+    param_key = "theta_sec" if level == "section" else "theta_cat"
+    samples = idata.posterior[param_key].stack(draws=["chain", "draw"]).values
 
     unique_teams = sorted(df_plot[config.ID_VAR].unique())
     unique_years = sorted(df_plot[config.YEAR_COL].unique())
     num_teams = len(unique_teams)
 
-    fig, axes = plt.subplots(num_teams, 1, figsize=(14, 2.8 * num_teams), sharex=True)
+    fig, axes = plt.subplots(num_teams, 1, figsize=(13, 2.5 * num_teams), sharex=True)
     if num_teams == 1:
         axes = [axes]
 
-    palette = sns.color_palette("muted", num_teams)
-    x_vals = np.linspace(-3.5, 3.5, 300)
+    colors = plt.cm.get_cmap("tab10", num_teams)
+    x_vals = np.linspace(-3.5, 3.5, 200)
 
     for i, team in enumerate(unique_teams):
         ax = axes[i]
-        team_color = palette[i % len(palette)]
+        team_color = colors(i)
         ax.axhline(0, color="#1f4e78", linestyle=":", lw=1.5, zorder=0)
 
-        for year in unique_years:
-            grp_rows = df_plot[(df_plot[config.ID_VAR] == team) & (df_plot[config.YEAR_COL] == year)]
-            if grp_rows.empty:
+        for yr in unique_years:
+            rows = df_plot[(df_plot[config.ID_VAR] == team) & (df_plot[config.YEAR_COL] == yr)]
+            if rows.empty:
                 continue
-            grp_idx = grp_rows["group_idx"].values[0]
+            grp_idx = rows["group_idx"].values[0]
 
-            # Get raw theta samples for this group and category
-            raw_samples = theta_samples[:, grp_idx, cat_idx]
-
-            # Post-hoc scale to standardized Z-scores safely
-            samples_z = (raw_samples - mu_mean) / sigma_mean
-
-            # Generate standard-deviation scaled density coordinates
-            kde = gaussian_kde(samples_z)
+            group_samples = samples[grp_idx, idx, :]
+            kde = gaussian_kde(group_samples)
             y_vals = kde(x_vals)
 
-            if year == 2023:
-                # 2023: No fill, colored outline
+            if yr == 2023:
                 ax.plot(x_vals, y_vals, color=team_color, lw=2, zorder=3)
-            elif year == 2025:
-                # 2025: Line hatched fill, colored outline
+            elif yr == 2025:
                 ax.plot(x_vals, y_vals, color=team_color, lw=2, zorder=3)
                 ax.fill_between(x_vals, y_vals, color="none", edgecolor=team_color, hatch="////", lw=0, zorder=2)
-            elif year == 2026:
-                # 2026: Opaque solid fill
-                ax.fill_between(x_vals, y_vals, color=team_color, alpha=0.85, zorder=1)
+            elif yr == 2026:
+                ax.fill_between(x_vals, y_vals, color=team_color, alpha=0.8, zorder=1)
 
-        # Draw red vertical reference indicator at the latest year's post-hoc standardized posterior mean
-        latest_year = unique_years[-1]
-        latest_rows = df_plot[(df_plot[config.ID_VAR] == team) & (df_plot[config.YEAR_COL] == latest_year)]
-        if not latest_rows.empty:
-            latest_grp_idx = latest_rows["group_idx"].values[0]
-            latest_raw_mean = theta_samples[:, latest_grp_idx, cat_idx].mean()
-            latest_z_mean = (latest_raw_mean - mu_mean) / sigma_mean
-            ax.axvline(latest_z_mean, color="red", linestyle="-", lw=2, zorder=5)
-
-        ax.set_ylabel(team, rotation=0, ha="right", va="center", fontsize=12, weight="bold", labelpad=15)
+        ax.set_ylabel(team, rotation=0, ha="right", va="center", fontsize=11, weight="bold", labelpad=15)
         ax.yaxis.set_ticks([])
         ax.set_ylim(bottom=0)
-
         for spine in ["top", "right", "left", "bottom"]:
             ax.spines[spine].set_visible(False)
 
     for ax in axes:
         ax.axvline(0, color="#1f4e78", linestyle="--", lw=1, zorder=1)
 
-    axes[0].text(0, axes[0].get_ylim()[1] * 1.15, "mean", ha="center", va="bottom", style="italic", fontsize=12)
-
-    # Clean Legend
-    legend_elements = [
-        mpatches.Patch(facecolor="none", edgecolor="black", label="2023"),
-        mpatches.Patch(facecolor="none", edgecolor="black", hatch="////", label="2025"),
-        mpatches.Patch(facecolor="gray", alpha=0.85, label="2026")
-    ]
-    fig.legend(handles=legend_elements,
-               loc="upper right",
-               bbox_to_anchor=(0.95, 0.98),
-               ncol=3,
-               frameon=False,
-               fontsize=11)
-
-    plt.xlabel("Capability Score (Theta Standard Deviations)", fontsize=12, labelpad=15)
+    plt.xlabel(f"{level.capitalize()} Score (St. Devs from Mean)", fontsize=11, labelpad=12)
     plt.xlim(-3.5, 3.5)
     plt.tight_layout()
 
     suffix = f"_{filename_escape(target_dept)}" if target_dept else ""
-    filepath = os.path.join(config.OUTPUT_DIR, f"ridge_plots_{filename_escape(category_name)}{suffix}.png")
-    plt.savefig(filepath, bbox_inches="tight")
+    filename = f"ridge_{level}_{filename_escape(name)}{suffix}.png"
+    plt.savefig(os.path.join(config.OUTPUT_DIR, filename), bbox_inches="tight")
     plt.close()
 
-def plot_category_response_functions(question_id: str, idata: az.InferenceData,
-                                     question_idx_map: Dict[str, int]) -> None:
+
+def plot_category_response_functions(
+        question_id: str,
+        idata: az.InferenceData,
+        struct_maps: Dict[str, Any]
+) -> None:
     """
-    Renders the Category Response Functions P(Y=c|theta) showing probability transitions.
+    Renders Category Response Functions P(Y=c|theta) showing probability boundaries.
     """
+    question_idx_map = struct_maps["question_idx_map"]
     if question_id not in question_idx_map:
         return
     q_idx = question_idx_map[question_id]
+    K = len(question_idx_map)
 
-    a_samples = idata.posterior["a"].values.reshape(-1, len(question_idx_map))[:, q_idx]
-    cut_samples = \
-        idata.posterior["cutpoints"].values.reshape(-1, len(question_idx_map), config.N_CATEGORIES_RESPONSE - 1)[
-            :, q_idx, :]
+    a_samples = idata.posterior["a"].values.reshape(-1, K)[:, q_idx]
+    cut_samples = idata.posterior["cutpoints"].values.reshape(-1, K, config.N_CATEGORIES_RESPONSE - 1)[:, q_idx, :]
 
     thin_idx = np.linspace(0, len(a_samples) - 1, 100, dtype=int)
     a_samples = a_samples[thin_idx, None, None]
@@ -405,7 +389,7 @@ def plot_category_response_functions(question_id: str, idata: az.InferenceData,
         ax.plot(theta_vals, probs[:, c], color=colors(c), lw=2, label=f"Category {c + 1}")
     ax.set_xlabel("Latent Trait (Theta)")
     ax.set_ylabel("Probability")
-    ax.set_title(f"Category Response Functions: {question_id}")
+    ax.set_title(f"Category Response Functions: {question_id}", weight="bold")
     ax.legend(loc="upper left")
     ax.grid(True, linestyle=":", alpha=0.6)
     plt.savefig(os.path.join(config.OUTPUT_DIR, f"crf_{filename_escape(question_id)}.png"), bbox_inches="tight")
@@ -416,13 +400,13 @@ def plot_predicted_vs_empirical_dist(
         question_id: str,
         idata: az.InferenceData,
         df_long: pd.DataFrame,
-        question_idx_map: Dict[str, int],
-        question_categories: Dict[str, int],
+        struct_maps: Dict[str, Any],
         ci_level: float = 0.95
 ) -> None:
     """
     Plots predictive check proportions against empirical frequencies with posterior HDIs.
     """
+    question_idx_map = struct_maps["question_idx_map"]
     if question_id not in question_idx_map:
         return
     q_idx = question_idx_map[question_id]
@@ -432,24 +416,25 @@ def plot_predicted_vs_empirical_dist(
 
     empirical_responses = df_long.iloc[obs_indices]["response"].values
     groups_for_q = df_long.iloc[obs_indices]["group_idx"].values
-    q_dim = question_categories[question_id]
+
+    q_cat_idx = struct_maps["question_to_category"][q_idx]
+    K = len(question_idx_map)
+    J = len(struct_maps["group_idx_map"])
+    C_cat = len(struct_maps["categories"])
 
     # Reshape posterior parameters
-    a_samples = idata.posterior["a"].values.reshape(-1, len(question_idx_map))[:, q_idx]
-    cut_samples = \
-        idata.posterior["cutpoints"].values.reshape(-1, len(question_idx_map), config.N_CATEGORIES_RESPONSE - 1)[
-            :, q_idx, :]
-    theta_samples = idata.posterior["theta"].values.reshape(-1, len(df_long["group_idx"].unique()),
-                                                            len(config.CATEGORY_MAPPING_INITIAL))
+    a_samples = idata.posterior["a"].values.reshape(-1, K)[:, q_idx]
+    cut_samples = idata.posterior["cutpoints"].values.reshape(-1, K, config.N_CATEGORIES_RESPONSE - 1)[:, q_idx, :]
+    theta_cat_samples = idata.posterior["theta_cat"].values.reshape(-1, J, C_cat)
 
     # Thin to 200 samples to optimize performance while preserving shape stability
-    sample_indices = np.linspace(0, len(a_samples) - 1, 200, dtype=int)
+    sample_indices = np.linspace(0, len(a_samples) - 1, 150, dtype=int)
     predicted_proportions = np.zeros((len(sample_indices), config.N_CATEGORIES_RESPONSE))
 
     for idx, s_idx in enumerate(sample_indices):
         a_s = a_samples[s_idx]
         cuts_s = cut_samples[s_idx]
-        theta_s = theta_samples[s_idx, groups_for_q, q_dim]
+        theta_s = theta_cat_samples[s_idx, groups_for_q, q_cat_idx]
 
         # Calculate GRM probabilities vectorized
         eta = a_s * theta_s[:, None]
@@ -495,23 +480,23 @@ def plot_predicted_vs_empirical_dist(
 def plot_item_information_function(
         question_id: str,
         idata: az.InferenceData,
-        question_idx_map: Dict[str, int],
+        struct_maps: Dict[str, Any],
         ci_level: float = 0.95
 ) -> None:
     """
-    Renders approximate Item Information Function (IIF) curves incorporating shaded HDI bounds.
+    Renders Item Information Function (IIF) curves incorporating shaded HDI bounds.
     """
+    question_idx_map = struct_maps["question_idx_map"]
     if question_id not in question_idx_map:
         return
     q_idx = question_idx_map[question_id]
+    K = len(question_idx_map)
 
-    a_samples = idata.posterior["a"].values.reshape(-1, len(question_idx_map))[:, q_idx]
-    cut_samples = \
-        idata.posterior["cutpoints"].values.reshape(-1, len(question_idx_map), config.N_CATEGORIES_RESPONSE - 1)[
-            :, q_idx, :]
+    a_samples = idata.posterior["a"].values.reshape(-1, K)[:, q_idx]
+    cut_samples = idata.posterior["cutpoints"].values.reshape(-1, K, config.N_CATEGORIES_RESPONSE - 1)[:, q_idx, :]
 
     # Thin samples to speed up mathematical integration
-    sample_indices = np.linspace(0, len(a_samples) - 1, 200, dtype=int)
+    sample_indices = np.linspace(0, len(a_samples) - 1, 150, dtype=int)
     theta_vals = np.linspace(-3.5, 3.5, 100)
     info_samples = np.zeros((len(sample_indices), len(theta_vals)))
 
@@ -553,13 +538,12 @@ def plot_test_information_function(
         ci_level: float = 0.95
 ) -> None:
     """
-    Renders Test Information Functions (TIF) and Standard Error of Measurement (SEM)
-    curves with fully shaded credible uncertainty intervals.
+    Renders Test Information Functions (TIF) and Standard Error of Measurement (SEM).
     """
     a_samples = idata.posterior["a"].values.reshape(-1, K)
     cut_samples = idata.posterior["cutpoints"].values.reshape(-1, K, config.N_CATEGORIES_RESPONSE - 1)
 
-    sample_indices = np.linspace(0, len(a_samples) - 1, 150, dtype=int)
+    sample_indices = np.linspace(0, len(a_samples) - 1, 100, dtype=int)
     theta_vals = np.linspace(-3.5, 3.5, 100)
     tif_samples = np.zeros((len(sample_indices), len(theta_vals)))
 

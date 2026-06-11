@@ -2,16 +2,18 @@
 """
 model_pymc.py
 
-Defines the Multidimensional Graded Response Model (MGRM) in PyMC,
-incorporating standard default priors alongside clear comments for alternative
-sensitivity checks. Uses a JAX (NumPyro) backend when available for parallelized sampling.
+Defines the Hierarchical Multidimensional Graded Response Model (H-MGRM).
+It uses a 2-level structure (Sections -> Categories) heavily anchored to
+a Z-Score space to eliminate parameter identification collapse.
+1-question categories are mathematically handled via a masking constraint.
 """
 
+import os
+from typing import Any
 from typing import Dict
 from typing import Tuple
 
 import arviz as az
-import numpy as np
 import pandas as pd
 import pymc as pm
 import pytensor.tensor as pt
@@ -19,7 +21,6 @@ import pytensor.tensor as pt
 import config
 import data_utils
 
-# Check for parallelization engine
 try:
     import numpyro
 
@@ -31,100 +32,99 @@ except ImportError:
 
 def build_and_run_model(
         df_long: pd.DataFrame,
-        question_idx_map: Dict[str, int],
-        question_categories: Dict[str, int]
+        struct_maps: Dict[str, Any]
 ) -> Tuple[az.InferenceData, pm.Model]:
     """
-    Constructs the model context and draws posterior samples using MCMC.
+    Constructs and samples the hierarchical MGRM. Compiles GraphViz representation.
+
+    Args:
+        df_long: Parsed observation row table.
+        struct_maps: Dictionary containing PyMC array vectors (Sections/Categories/Masks).
+
+    Returns:
+        ArviZ Inference Data object containing all traces, and the PyMC model context.
     """
-    K = len(question_idx_map)
-    L = len(np.unique(list(question_categories.values())))
-    J = len(df_long["group_idx"].unique())
-    C = config.N_CATEGORIES_RESPONSE
+    K = len(struct_maps["questions"])
+    C_cat = len(struct_maps["categories"])
+    S_sec = len(struct_maps["sections"])
+    J = len(struct_maps["group_idx_map"])
+    C_resp = config.N_CATEGORIES_RESPONSE
 
-    # Derive mapping of questions to dimensions for model graph indexing
-    q_idx_to_dim_idx = {q_idx: question_categories[q] for q, q_idx in question_idx_map.items()}
-    question_to_dimension = np.array([q_idx_to_dim_idx[k] for k in range(K)])
-
-    # Extract observed indices
     obs_q_idx = df_long["question_idx"].values
     obs_g_idx = df_long["group_idx"].values
-    obs_dim_idx = question_to_dimension[obs_q_idx]
+    question_to_category = struct_maps["question_to_category"]
+    category_to_section = struct_maps["category_to_section"]
+    is_multi_item_mask = struct_maps["is_multi_item_mask"]
+    obs_cat_idx = question_to_category[obs_q_idx]
 
-    # Generate smart starting points
-    smart_inits = data_utils.generate_smart_init(df_long, K, C, L, J, config.RESPONSE_OPTIONS)
+    smart_inits = data_utils.generate_smart_init(df_long, K, C_resp)
 
-    with pm.Model() as dora_mgrm_model:
+    with pm.Model() as dora_hmgrm:
         # ----------------------------------------------------
-        # PRIOR SENSITIVITY TESTING OPTIONS
+        # PRIORS & SENSITIVITY TESTING OPTIONS
         # ----------------------------------------------------
 
-        # --- Parameter 1: Dimension Mean Prior (mu) ---
-        # Default Prior (Standard normal):
-        mu = pm.Normal("mu", mu=0, sigma=1, shape=(L, 1), initval=smart_inits["mu"])
-        # Alternative Sensitivity Prior 1 (Tighter Regularization):
-        # mu = pm.Normal("mu", mu=0, sigma=0.5, shape=(L, 1), initval=smart_inits["mu"])
-        # Alternative Sensitivity Prior 2 (Wider / Weakly Informative):
-        # mu = pm.Normal("mu", mu=0, sigma=2.0, shape=(L, 1), initval=smart_inits["mu"])
-        # Alternative Sensitivity Prior 3 (Robust Student's t, accommodating outlier teams/dimensions):
-        # mu = pm.StudentT("mu", nu=7, mu=0, sigma=1, shape=(L, 1), initval=smart_inits["mu"])
+        # --- Parameter 1: Question Discrimination (a) ---
+        # Default Prior: LogNormal ensures strict positivity.
+        # Sensitivity Check: pm.LogNormal("a", mu=0.0, sigma=1.0) for wider variance.
+        a = pm.LogNormal("a", mu=0.0, sigma=0.5, shape=K)
 
-        # --- Parameter 2: Dimension Standard Deviation (sigma) ---
-        # Default Prior (Weakly informative half-normal):
-        sigma_val = pm.HalfNormal("sigma", sigma=1.0, shape=L, initval=smart_inits["sigma"])
-        # Alternative Sensitivity Prior 1 (Heavier tailed Half-Cauchy):
-        # sigma_val = pm.HalfCauchy("sigma", beta=2.5, shape=L, initval=smart_inits["sigma"])
-        # Alternative Sensitivity Prior 2 (Exponential prior):
-        # sigma_val = pm.Exponential("sigma", lam=1.0, shape=L, initval=smart_inits["sigma"])
-
-        # --- Parameter 3: Cholesky Correlation Factor (L_Omega) ---
-        # Default Prior (LKJ prior, weakly favoring smaller off-diagonal correlations):
-        chol_cov, corr, _ = pm.LKJCholeskyCov(
-            "chol_cov", n=L, eta=2.0, sd_dist=pm.HalfNormal.dist(1.0)
-        )
-        # Alternative Sensitivity Prior 1 (Uniform prior over correlation matrices):
-        # chol_cov, corr, _ = pm.LKJCholeskyCov("chol_cov", n=L, eta=1.0, sd_dist=pm.HalfNormal.dist(1.0))
-        # Alternative Sensitivity Prior 2 (Strong push towards zero off-diagonal correlation):
-        # chol_cov, corr, _ = pm.LKJCholeskyCov("chol_cov", n=L, eta=4.0, sd_dist=pm.HalfNormal.dist(1.0))
-
-        # --- Parameter 4: Question Discrimination (a) ---
-        # Default Prior (LogNormal, forcing discrimination to be strictly positive):
-        a = pm.LogNormal("a", mu=0.0, sigma=0.5, shape=K, initval=smart_inits["a"])
-        # Alternative Sensitivity Prior 1 (More variable LogNormal prior):
-        # a = pm.LogNormal("a", mu=0.0, sigma=1.0, shape=K, initval=smart_inits["a"])
-        # Alternative Sensitivity Prior 2 (Half-Normal prior):
-        # a = pm.HalfNormal("a", sigma=1.0, shape=K, initval=smart_inits["a"])
-
-        # --- Parameter 5: Cutpoints / Ordinal Thresholds ---
-        # Default Prior (first cut Normal, offsets modeled as strictly positive Exponential steps):
-        first_cut = pm.Normal("first_cut", mu=0.0, sigma=3.0, shape=(K, 1), initval=smart_inits["first_cut"])
-        cut_diffs = pm.Exponential("cut_diffs", lam=1.0, shape=(K, C - 2), initval=smart_inits["cut_diffs"])
-        # Alternative Sensitivity Prior 1 (Wider distances between thresholds, i.e., larger spacing):
-        # cut_diffs = pm.Exponential("cut_diffs", lam=0.5, shape=(K, C - 2), initval=smart_inits["cut_diffs"])
-        # Alternative Sensitivity Prior 2 (Tighter grouping/closer boundaries):
-        # cut_diffs = pm.Exponential("cut_diffs", lam=2.0, shape=(K, C - 2), initval=smart_inits["cut_diffs"])
-
-        # ----------------------------------------------------
-        # LATENT TRAIT REPRESENTATION & LIKELIHOOD
-        # ----------------------------------------------------
-        z = pm.Normal("z", mu=0, sigma=1, shape=(L, J), initval=smart_inits["z"])
-        theta = pm.Deterministic("theta", (mu + pt.dot(chol_cov, z)).T)
-        pm.Deterministic("theta_z", (theta - mu.T) / sigma_val)
-
-        # Reconstruct full correlation matrix & covariance
-        pm.Deterministic("cov", pt.dot(chol_cov, chol_cov.T))
-        pm.Deterministic("Omega", corr)
-
-        # Concatenate threshold steps safely to represent ordered cutpoints
+        # --- Parameter 2: Cutpoints ---
+        # Default Prior: Initial boundary is normal, steps are positive exponentials.
+        first_cut = pm.Normal("first_cut", mu=-1.5, sigma=2.0, shape=(K, 1), initval=smart_inits["first_cut"])
+        cut_diffs = pm.Exponential("cut_diffs", lam=1.0, shape=(K, C_resp - 2), initval=smart_inits["cut_diffs"])
         cutpoints = pm.Deterministic(
             "cutpoints",
             pt.concatenate([first_cut, first_cut + pt.cumsum(cut_diffs, axis=1)], axis=1)
         )
 
-        # Standard Graded Response logit calculation
-        eta = a[obs_q_idx] * theta[obs_g_idx, obs_dim_idx]
+        # ----------------------------------------------------
+        # LEVEL 1: Correlated Section Scores
+        # ----------------------------------------------------
+        # The latent trait z_sec represents abstract unscaled capability
+        z_sec = pm.Normal("z_sec", mu=0, sigma=1, shape=(S_sec, J))
 
-        # Likelihood
+        # LKJ Cholesky Prior models the structural correlation between high-level Sections.
+        # Sensitivity Check: pm.LKJCholeskyCov("chol_cov", n=S_sec, eta=1.0) for uniform distribution matrices.
+        chol_cov, corr, stds = pm.LKJCholeskyCov(
+            "chol_cov", n=S_sec, eta=2.0, sd_dist=pm.Exponential.dist(1.0)
+        )
+
+        # We enforce standardized z-score structure (Mean 0, Var 1) by dropping the varying stds.
+        chol_corr = chol_cov / stds[:, None]
+
+        # Final Section Scores: (J, S_sec)
+        theta_sec = pm.Deterministic("theta_sec", pt.dot(chol_corr, z_sec).T)
+
+        # ----------------------------------------------------
+        # LEVEL 2: Nested Category Scores
+        # ----------------------------------------------------
+        # sigma_cat_raw specifies how much each Category can deviate from its parent Section.
+        sigma_cat_raw = pm.HalfNormal("sigma_cat_raw", sigma=0.5, shape=C_cat)
+
+        # ANCHORING MASK: If a category is single-question, its variance is clamped to 0.0
+        sigma_cat = pm.Deterministic("sigma_cat", sigma_cat_raw * is_multi_item_mask)
+        z_cat = pm.Normal("z_cat", mu=0, sigma=1, shape=(C_cat, J))
+
+        # Calculate localized deviations for each team
+        category_offset = pm.Deterministic("category_offset", (z_cat * sigma_cat[:, None]).T)
+
+        # Final Category Scores: Broadcast Section scores to Category Map + Offsets
+        theta_cat = pm.Deterministic(
+            "theta_cat",
+            theta_sec[:, category_to_section] + category_offset
+        )
+
+        # Downstream graphing aliases
+        pm.Deterministic("Omega", corr)
+        pm.Deterministic("mu", pt.zeros((S_sec, 1)))
+        pm.Deterministic("sigma", pt.ones(S_sec))
+
+        # ----------------------------------------------------
+        # LIKELIHOOD
+        # ----------------------------------------------------
+        eta = a[obs_q_idx] * theta_cat[obs_g_idx, obs_cat_idx]
+
         y_obs = pm.OrderedLogistic(
             "y_obs",
             eta=eta,
@@ -132,11 +132,17 @@ def build_and_run_model(
             observed=df_long["response"].values - 1
         )
 
-        # ----------------------------------------------------
-        # SAMPLE posterior & posterior predictive
-        # ----------------------------------------------------
-        print(f"\nSampler configuration initiated with target_accept={config.TARGET_ACCEPT}.")
+        # --- GraphViz DAG Export ---
+        try:
+            g = pm.model_to_graphviz(dora_hmgrm)
+            g.render(filename=os.path.join(config.OUTPUT_DIR, 'model_dag'), format='png', cleanup=True)
+            print("  Successfully saved Model DAG representation to model_dag.png")
+        except Exception as e:
+            print(f"  [SKIPPED] GraphViz DAG representation (Install graphviz system binaries): {e}")
+
+        # --- Execute Sampler ---
         sampler_choice = "numpyro" if HAS_NUMPYRO else "nuts"
+        print(f"  Executing H-MGRM compilation on {sampler_choice}...")
 
         idata = pm.sample(
             draws=config.ITER_SAMPLING,
@@ -144,7 +150,6 @@ def build_and_run_model(
             chains=config.CHAINS,
             random_seed=config.RANDOM_SEED,
             target_accept=config.TARGET_ACCEPT,
-            init="adapt_diag",
             nuts_sampler=sampler_choice,
             compute_convergence_stat=True
         )
@@ -152,4 +157,4 @@ def build_and_run_model(
         print("Executing posterior predictive simulation checks...")
         pm.sample_posterior_predictive(idata, extend_inferencedata=True, random_seed=config.RANDOM_SEED)
 
-    return idata, dora_mgrm_model
+    return idata, dora_hmgrm
