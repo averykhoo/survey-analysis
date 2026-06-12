@@ -2,6 +2,114 @@
 
 ![model](./dora_analysis_output_pymc/model/model_dag.png)
 
+```mermaid
+flowchart TB
+    %% Custom Styling
+    classDef randomVar stroke:#1f2937,stroke-width:1.5px;
+    classDef deterministicVar stroke:#1f2937,stroke-width:1.5px;
+    classDef observedVar stroke:#374151,stroke-width:2px;
+
+    %% --------------------------------------------------
+    %% SUBGRAPHS (Plates)
+    %% --------------------------------------------------
+
+    subgraph Plate_11 ["Plate: 11"]
+        sigma_cat_raw(["sigma_cat_raw<br>~<br>Halfnormal"]):::randomVar
+        sigma_cat["sigma_cat<br>~<br>Deterministic"]:::deterministicVar
+    end
+
+    subgraph Plate_11_18 ["Plate: 11 x 18"]
+        z_cat(["z_cat<br>~<br>Normal"]):::randomVar
+    end
+
+    subgraph Plate_18_11 ["Plate: 18 x 11"]
+        category_offset["category_offset<br>~<br>Deterministic"]:::deterministicVar
+        theta_cat["theta_cat<br>~<br>Deterministic"]:::deterministicVar
+    end
+
+    subgraph Plate_4_18 ["Plate: 4 x 18"]
+        z_sec(["z_sec<br>~<br>Normal"]):::randomVar
+    end
+
+    subgraph Plate_10 ["Plate: 10"]
+        chol_cov(["chol_cov<br>~<br>_LKJCholeskyCov"]):::randomVar
+    end
+
+    subgraph Plate_4 ["Plate: 4"]
+        chol_cov_stds["chol_cov_stds<br>~<br>Deterministic"]:::deterministicVar
+        sigma["sigma<br>~<br>Deterministic"]:::deterministicVar
+    end
+
+    subgraph Plate_18_4 ["Plate: 18 x 4"]
+        theta_sec["theta_sec<br>~<br>Deterministic"]:::deterministicVar
+    end
+
+    subgraph Plate_4_4 ["Plate: 4 x 4"]
+        chol_cov_corr["chol_cov_corr<br>~<br>Deterministic"]:::deterministicVar
+        Omega["Omega<br>~<br>Deterministic"]:::deterministicVar
+    end
+
+    subgraph Plate_4_1 ["Plate: 4 x 1"]
+        mu["mu<br>~<br>Deterministic"]:::deterministicVar
+    end
+
+    subgraph Plate_17_1 ["Plate: 17 x 1"]
+        first_cut(["first_cut<br>~<br>Normal"]):::randomVar
+    end
+
+    subgraph Plate_17_4 ["Plate: 17 x 4"]
+        cut_diffs(["cut_diffs<br>~<br>Exponential"]):::randomVar
+    end
+
+    subgraph Plate_17_5 ["Plate: 17 x 5"]
+        cutpoints["cutpoints<br>~<br>Deterministic"]:::deterministicVar
+    end
+
+    subgraph Plate_17 ["Plate: 17"]
+        a(["a<br>~<br>Lognormal"]):::randomVar
+    end
+
+    subgraph Plate_7272_6 ["Plate: 7272 x 6"]
+        y_obs_probs["y_obs_probs<br>~<br>Deterministic"]:::deterministicVar
+    end
+
+    subgraph Plate_7272 ["Plate: 7272"]
+        y_obs(["y_obs<br>~<br>Categorical"]):::observedVar
+    end
+
+    %% --------------------------------------------------
+    %% CONNECTIONS (Edges)
+    %% --------------------------------------------------
+
+    %% Level 2: Nested Category Offsets
+    sigma_cat_raw --> sigma_cat
+    sigma_cat --> category_offset
+    z_cat --> category_offset
+    category_offset --> theta_cat
+
+    %% Level 1: Correlated Section Scores
+    z_sec --> theta_sec
+    chol_cov --> chol_cov_stds
+    chol_cov --> chol_cov_corr
+    chol_cov --> theta_sec
+    chol_cov_stds --> theta_sec
+    chol_cov_corr --> Omega
+
+    %% Hierarchy Coupling
+    theta_sec --> theta_cat
+
+    %% Item Parameters & Cutpoints
+    first_cut --> cutpoints
+    cut_diffs --> cutpoints
+
+    %% Likelihood Integration
+    theta_cat --> y_obs_probs
+    cutpoints --> y_obs_probs
+    a --> y_obs_probs
+    y_obs_probs --> y_obs
+```
+
+
 | Node (Shape)                        | Prior / Transform / Type                                      | What it is about                                                                                                                                                                      | Why this is a reasonable hyperparameterization                                                                                                                                                                                          |
 |:------------------------------------|:--------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **`sigma_cat_raw`** *(oval)*        | `Halfnormal` (`#categories`)                                  | Raw latent standard deviations of the 11 Category capability offsets from their parent Sections.                                                                                      | Restricts variance to be strictly positive ($\ge 0$) and regularizes category-level deviations to prevent them from drifting excessively from their Section baselines.                                                                  |
