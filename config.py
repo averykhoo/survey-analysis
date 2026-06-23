@@ -27,7 +27,7 @@ for d in [MODEL_DIR, DIAGNOSTICS_DIR, CSV_DIR, PLOTS_DIR]:
 # --- MCMC Sampler Configurations ---
 ITER_WARMUP: int = 1000
 ITER_SAMPLING: int = 1500
-CHAINS: int = 4
+CHAINS: int = 4 # 8 chains takes too much vram when running posterior checks
 TARGET_ACCEPT: float = 0.95  # High target accept to prevent divergent transitions
 
 # --- Statistical Diagnostic Thresholds ---
@@ -43,6 +43,11 @@ RESPONSE_OPTIONS: List[int] = [1, 2, 3, 4, 5, 6]
 N_CATEGORIES_RESPONSE: int = len(RESPONSE_OPTIONS)
 YEAR_COL: str = "year"
 ID_VAR: str = "team_id"
+
+# --------------------------------------------------------------------
+# CHANGE ALL VALUES BELOW IN PROD!
+# --------------------------------------------------------------------
+
 
 # --- Hierarchical Survey Map (Sections -> Categories -> Questions) ---
 SURVEY_HIERARCHY: Dict[str, Dict[str, List[str]]] = {

@@ -9,6 +9,7 @@ a Z-Score space to eliminate parameter identification collapse.
 """
 
 import os
+import warnings
 from typing import Any
 from typing import Dict
 from typing import Tuple
@@ -17,6 +18,7 @@ import arviz as az
 import numpy as np
 import pandas as pd
 import pymc as pm
+import pymc.sampling.jax as pm_jax
 import pytensor.tensor as pt
 
 import config
@@ -24,9 +26,24 @@ import data_utils
 
 try:
     import numpyro
-
-    numpyro.set_host_device_count(4)
     HAS_NUMPYRO = True
+    CHAIN_METHOD = 'parallel'
+
+    try:
+        import jax
+        print('FOUND NUMPYRO + JAX')
+        print(f'{jax.default_backend()=}')
+        print(f'{jax.devices()=}')
+
+        if jax.default_backend() == 'gpu':
+            CHAIN_METHOD='vectorized'
+            warnings.warn('unless you have 40+gb of vram i highly recommend using the cpu instead, '
+                          'set `JAX_PLATFORM_NAME=cpu` before importing jax')
+
+    except ImportError:
+        print('FOUND NUMPYRO (CPU ONLY)')
+        numpyro.set_host_device_count(48) # many cores in prod server, decrease when testing
+
 except ImportError:
     HAS_NUMPYRO = False
 
@@ -145,14 +162,18 @@ def build_and_run_model(
         sampler_choice = "numpyro" if HAS_NUMPYRO else "nuts"
         print(f"  Executing H-MGRM compilation on {sampler_choice}...")
 
-        idata = pm.sample(
+        idata = pm_jax.sample_numpyro_nuts( #pm.sample(
             draws=config.ITER_SAMPLING,
             tune=config.ITER_WARMUP,
             chains=config.CHAINS,
+            chain_method=CHAIN_METHOD,
             random_seed=config.RANDOM_SEED,
             target_accept=config.TARGET_ACCEPT,
             nuts_sampler=sampler_choice,
-            compute_convergence_stat=True
+            compute_convergence_checks=True,
+            postprocessing_backend='cpu',  # move to cpu immediately to avoid allocating more vram
+            postprocessing_chunks=4, # reduce peak gpu memory
+            idata_kwargs = {'log_likelihood': True}, # needed for looic diagnostics (optional, defaults to true)
         )
 
         print("Executing posterior predictive simulation checks...")
