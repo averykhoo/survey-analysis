@@ -54,7 +54,7 @@ def main():
     with open(os.path.join(config.MODEL_DIR, "struct_maps.pkl"), "wb") as f:
         pickle.dump(struct_maps, f)
 
-    print("  All data points, mappings, and posterior matrices saved in: model/")
+    print("  Sampling trace saved. Exiting process to clear VRAM pool.")
     print(f"Elapsed time for SECTION 4: {time.time() - sec_start:.2f} seconds")
 
     print(f"\n=======================================================")

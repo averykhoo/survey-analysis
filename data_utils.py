@@ -39,6 +39,7 @@ def simulate_dora_data_reorg(
     Returns:
         Dataframe of simulated responses and Dictionary of true generative parameters.
     """
+    print("--- SIMULATING SYNTHETIC DORA DATA WITH REORGANIZATIONS ---")
     rng = np.random.default_rng(config.RANDOM_SEED)
 
     # Determine teams active per year based on the lineage chaining
@@ -165,6 +166,7 @@ def simulate_dora_data_reorg(
 
     df = pd.DataFrame(data)
     true_params = {"true_a": true_a, "true_cutpoints": true_cutpoints, "true_Omega_sec": true_Omega_sec}
+    print(f"  Successfully simulated {len(df)} rows across {sim_years_reorg} with reorg structures.")
     return df, true_params
 
 
@@ -180,6 +182,12 @@ def load_and_preprocess_data(df_raw: pd.DataFrame, hierarchy_map: Dict[str, Dict
     Returns:
         Processed long-format DataFrame and structural tensor dictionaries for the model.
     """
+    print("--- PARSING STRUCTURAL LAYERS & INDEX MAPPINGS ---")
+
+    # Strict Type Coercion to prevent dictionary lineage lookup failures
+    df_raw[config.YEAR_COL] = df_raw[config.YEAR_COL].astype(int)
+    df_raw[config.ID_VAR] = df_raw[config.ID_VAR].astype(str).str.strip()
+
     sections_list = list(hierarchy_map.keys())
     categories_list = []
     questions_list = []
@@ -230,6 +238,8 @@ def load_and_preprocess_data(df_raw: pd.DataFrame, hierarchy_map: Dict[str, Dict
         "question_idx_map":     question_idx_map
     }
 
+    print(f"  Preprocessed counts: {len(questions_list)} questions, {len(categories_list)} categories, "
+          f"{len(sections_list)} sections across {len(groups_list)} team-year groups.")
     return df_long, struct_maps
 
 

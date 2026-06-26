@@ -37,7 +37,7 @@ def run_diagnostic_checks(
     Returns:
         List of generated warnings, and the compiled ArviZ stats summary DataFrame.
     """
-    print("\n--- RUNNING SYSTEM MODEL CONVERGENCE DIAGNOSTICS ---")
+    print("\n--- RUNNING STATISTICAL CONVERGENCE DIAGNOSTICS ---")
     warnings_found: List[str] = []
 
     # 1. Low sample sizes per team group
@@ -53,13 +53,12 @@ def run_diagnostic_checks(
         divergences = idata.sample_stats.diverging.sum().item()
         if divergences > 0:
             warnings_found.append(
-                f"CRITICAL WARNING: {divergences} divergent transitions detected. Parameterization may be unstable!"
+                f"CRITICAL WARNING: {divergences} divergent transitions detected. Scale parameters may be unstable!"
             )
         else:
             print("  Sampler Divergences: OK (0 found)")
 
-    # 3. Compile ArviZ Summaries
-    summary = az.summary(idata, var_names=["a", "theta_sec"], round_to=3)
+    summary = az.summary(idata, var_names=["a", "theta_sec", "sigma_cat_raw"], round_to=3)
     max_rhat = summary["r_hat"].max()
     print(f"  Maximum observed R-hat: {max_rhat:.3f}")
     if max_rhat > config.RHAT_THRESHOLD:
@@ -92,6 +91,7 @@ def run_diagnostic_checks(
     # Evaluate Section-level correlations to recommend structural merges
     sections_list = struct_maps["sections"]
     S = len(sections_list)
+    posterior_means = idata.posterior.mean(dim=["chain", "draw"])
     Omega_mean = posterior_means["Omega"].values
     if S > 1:
         redundant_pairs = []
@@ -108,6 +108,26 @@ def run_diagnostic_checks(
             print("\n  [STRUCTURAL DIAGNOSTIC] Redundancy Detected:")
             for p1, p2, val in redundant_pairs:
                 print(f"    - '{p1}' <---> '{p2}' (Correlation: {val:.3f}) -> Suggest survey merge [1].")
+
+
+    try:
+        az.plot_energy(idata)
+        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "energy_plot.png"), bbox_inches="tight")
+        plt.close()
+        print("  Saved energy diagnostic plot to diagnostics/energy_plot.png.")
+    except Exception as e:
+        print(f"  [SKIPPED] Energy plot failed: {e}")
+
+    try:
+        # Check scale-indeterminacy loop resolution (a vs sigma_cat)
+        az.plot_pair(idata, var_names=["a", "sigma_cat_raw"], coords={"question": [struct_maps["questions"][0]]}, marginals=True)
+        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "pair_scale_indeterminacy_check.png"), bbox_inches="tight")
+        plt.close()
+        print("  Saved scale-indeterminacy check plot to diagnostics/pair_scale_indeterminacy_check.png.")
+    except Exception as e:
+        print(f"  [SKIPPED] Pair plot failed: {e}")
+
+
 
     # 6. Model Fit LOOIC / Pareto k Evaluation [1]
     print("  Calculating Leave-One-Out Cross-Validation (LOOIC)...")
@@ -132,3 +152,39 @@ def run_diagnostic_checks(
         print(f"  [SKIPPED] LOOIC calculations skipped: {e}")
 
     return warnings_found, summary
+
+
+def generate_cpu_posterior_predictive(idata: az.InferenceData, model: Any) -> az.InferenceData:
+    """
+    Safely compiles and runs PPC on the CPU using a thinned draw subset to prevent VRAM crashes.
+    """
+    print("\n--- RUNNING CPU-BASED POSTERIOR PREDICTIVE SIMULATIONS ---")
+    import os
+    os.environ["JAX_PLATFORM_NAME"] = "cpu"
+    import pymc as pm
+
+    with model:
+        idata_ppc = pm.sample_posterior_predictive(
+            idata,
+            predictions_to_sample=config.PPC_DRAWS,
+            extend_inferencedata=True,
+            random_seed=config.RANDOM_SEED
+        )
+    return idata_ppc
+
+
+def plot_ppc_safely(idata: az.InferenceData) -> None:
+    """
+    Plots PPC check safely, preventing AttributeError crashes if predictive groups are missing.
+    """
+    if "posterior_predictive" not in idata.groups():
+        print("  [SKIPPED] Posterior predictive plot skipped: 'posterior_predictive' group not found in container.")
+        return
+
+    try:
+        az.plot_ppc(idata, num_pp_samples=100)
+        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "ppc_plot.png"), bbox_inches="tight")
+        plt.close()
+        print("  Saved posterior predictive check plot to diagnostics/ppc_plot.png.")
+    except Exception as e:
+        print(f"  [SKIPPED] PPC plot execution failed: {e}")

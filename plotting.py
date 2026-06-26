@@ -38,12 +38,33 @@ def filename_escape(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
+def get_team_lineage_label(team_id: str, year: int, lineage_map: Dict[int, Dict[str, List[str]]]) -> str:
+    """
+    Traces parentage backward from 2026, compiling inline descriptive labels.
+    """
+    if year == 2026:
+        parents = lineage_map.get(2026, {}).get(team_id, [])
+        if parents and parents != [team_id]:
+            parent_str = ", ".join(parents)
+            grandparents = []
+            for p in parents:
+                gps = lineage_map.get(2025, {}).get(p, [])
+                grandparents.extend(gps)
+            grandparents = sorted(list(set(grandparents)))
+            if grandparents and grandparents != parents and grandparents != [team_id]:
+                gp_str = ", ".join(grandparents)
+                return f"{team_id}\n(from 2025: {parent_str})\n(from 2023: {gp_str})"
+            return f"{team_id}\n(from 2025: {parent_str})"
+    return team_id
+
+
 def plot_slope_chart_hierarchical(
         df_estimates: pd.DataFrame,
         name: str,
         level: str,
         years: List[int],
         lineage_map: Dict[int, Dict[str, List[str]]],
+        output_dir: str,
         target_dept: Optional[str] = None
 ) -> None:
     """
@@ -111,19 +132,21 @@ def plot_slope_chart_hierarchical(
             offset = -0.05 if yr == available_years[0] else 0.05
             align = "right" if yr == available_years[0] else "left"
 
+            display_label = get_team_lineage_label(team, yr, lineage_map)
+
             if len(meta["active_years"]) == 1:
                 ax.plot(yr, val, "x", color="gray", markersize=7, mew=2)
                 texts.append(
-                    ax.text(yr + offset, val, f"{team} (1-Yr)", ha=align, va="center", fontsize=8, color="gray"))
+                    ax.text(yr + offset, val, f"{display_label} (1-Yr)", ha=align, va="center", fontsize=8, color="gray"))
             else:
                 if meta["final_yr"] == final_year_overall:
                     ax.plot(yr, val, "o", color=team_colors[team], markersize=6)
-                    texts.append(ax.text(yr + offset, val, team, ha=align, va="center", fontsize=8))
+                    texts.append(ax.text(yr + offset, val, display_label, ha=align, va="center", fontsize=8))
                 else:
                     ax.plot(yr, val, "o", color="gray", markersize=6)
-                    texts.append(ax.text(yr + offset, val, team, ha=align, va="center", fontsize=8, color="gray"))
+                    texts.append(ax.text(yr + offset, val, display_label, ha=align, va="center", fontsize=8, color="gray"))
 
-    # Plot Lineages
+    # Plot Parent-Child Connection Lines
     for idx in range(len(available_years) - 1, 0, -1):
         y_to = available_years[idx]
         y_from = available_years[idx - 1]
@@ -148,7 +171,7 @@ def plot_slope_chart_hierarchical(
                                 alpha=0.75)
 
     if HAS_ADJUST_TEXT and texts:
-        adjust_text(texts, ax=ax, force_points=(0.2, 0.3), arrowprops=dict(arrowstyle="-", color="gray", lw=0.5))
+        adjust_text(texts, ax=ax, force_points=(0.2, 0.3), iterations=30, arrowprops=dict(arrowstyle="-", color="gray", lw=0.5))
 
     title_suffix = f" ({target_dept})" if target_dept else ""
     ax.set_title(f"Standardized {level.capitalize()} Evolution: {name}{title_suffix}", fontsize=13, weight="bold")
@@ -161,11 +184,11 @@ def plot_slope_chart_hierarchical(
 
     suffix = f"_{filename_escape(target_dept)}" if target_dept else ""
     filename = f"{level}_{filename_escape(name)}{suffix}.png"
-    plt.savefig(os.path.join(config.PLOTS_DIR, filename), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, filename), bbox_inches="tight")
     plt.close()
 
 
-def plot_omega_clustermap(corr_df: pd.DataFrame) -> None:
+def plot_omega_clustermap(corr_df: pd.DataFrame, output_dir: str) -> None:
     """
     Renders correlation matrices as hierarchical clustermaps.
     """
@@ -180,7 +203,7 @@ def plot_omega_clustermap(corr_df: pd.DataFrame) -> None:
             linewidths=.5, linecolor="lightgray", figsize=figsize
         )
         cluster_grid.figure.suptitle("Hierarchical Clustermap of Dimensions (Mean Omega)", y=1.02, weight="bold")
-        plt.savefig(os.path.join(config.PLOTS_DIR, "omega_clustermap.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(output_dir, "omega_clustermap.png"), bbox_inches="tight")
         plt.close()
         print("  Successfully plotted Omega hierarchical clustermap.")
     except Exception as e:
@@ -193,6 +216,7 @@ def plot_likert_response_distributions(
         category: str,
         questions: List[str],
         target_year: int,
+        output_dir: str,
         target_dept: Optional[str] = None
 ) -> None:
     """
@@ -270,7 +294,7 @@ def plot_likert_response_distributions(
             start_pos += val
 
     suffix = f"_{filename_escape(target_dept)}" if target_dept else ""
-    filepath = os.path.join(config.PLOTS_DIR, f"likert_{filename_escape(category)}{suffix}.png")
+    filepath = os.path.join(output_dir, f"likert_{filename_escape(category)}{suffix}.png")
     plt.savefig(filepath, bbox_inches="tight")
     plt.close()
 
@@ -281,10 +305,12 @@ def plot_ridge_plots_hierarchical(
         name: str,
         level: str,
         idx: int,
+        draws_to_use: int,
+        output_dir: str,
         target_dept: Optional[str] = None
 ) -> None:
     """
-    Generates posterior capabilities density ridge plots for Sections or Categories.
+    Generates posterior capabilities density ridge plots with thinned draws to accelerate KDE.
     """
     df_plot = df_estimates.copy()
     if target_dept is not None:
@@ -294,7 +320,11 @@ def plot_ridge_plots_hierarchical(
         return
 
     param_key = "theta_sec" if level == "section" else "theta_cat"
-    samples = idata.posterior[param_key].stack(draws=["chain", "draw"]).values
+    raw_samples = idata.posterior[param_key].stack(draws=["chain", "draw"]).values
+
+    total_samples = raw_samples.shape[-1]
+    step_size = max(1, total_samples // draws_to_use)
+    samples = raw_samples[:, :, ::step_size]
 
     unique_teams = sorted(df_plot[config.ID_VAR].unique())
     unique_years = sorted(df_plot[config.YEAR_COL].unique())
@@ -305,7 +335,7 @@ def plot_ridge_plots_hierarchical(
         axes = [axes]
 
     colors = plt.cm.get_cmap("tab10", num_teams)
-    x_vals = np.linspace(-3.5, 3.5, 200)
+    x_vals = np.linspace(-3.5, 3.5, 100)
 
     for i, team in enumerate(unique_teams):
         ax = axes[i]
@@ -345,17 +375,18 @@ def plot_ridge_plots_hierarchical(
 
     suffix = f"_{filename_escape(target_dept)}" if target_dept else ""
     filename = f"ridge_{level}_{filename_escape(name)}{suffix}.png"
-    plt.savefig(os.path.join(config.PLOTS_DIR, filename), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, filename), bbox_inches="tight")
     plt.close()
 
 
 def plot_category_response_functions(
         question_id: str,
         idata: az.InferenceData,
-        struct_maps: Dict[str, Any]
+        struct_maps: Dict[str, Any],
+        output_dir: str
 ) -> None:
     """
-    Renders Category Response Functions P(Y=c|theta) showing probability boundaries.
+    Vectorized rendering of Category Response Functions P(Y=c|theta).
     """
     question_idx_map = struct_maps["question_idx_map"]
     if question_id not in question_idx_map:
@@ -366,17 +397,16 @@ def plot_category_response_functions(
     a_samples = idata.posterior["a"].values.reshape(-1, K)[:, q_idx]
     cut_samples = idata.posterior["cutpoints"].values.reshape(-1, K, config.N_CATEGORIES_RESPONSE - 1)[:, q_idx, :]
 
-    thin_idx = np.linspace(0, len(a_samples) - 1, 100, dtype=int)
-    a_samples = a_samples[thin_idx, None, None]
-    cut_samples = cut_samples[thin_idx, None, :]
+    thin_idx = np.linspace(0, len(a_samples) - 1, 150, dtype=int)
+    a_samples = a_samples[thin_idx]
+    cut_samples = cut_samples[thin_idx, :]
 
     theta_vals = np.linspace(-3.5, 3.5, 100)
-    theta_grid = theta_vals[None, :, None]
 
-    eta = a_samples * theta_grid
-    cum_prob = sps.expit(cut_samples - eta)
+    eta = a_samples[:, None] * theta_vals[None, :]
+    cum_prob = sps.expit(cut_samples[:, None, :] - eta[:, :, None])
 
-    probs_all = np.zeros((100, 100, config.N_CATEGORIES_RESPONSE))
+    probs_all = np.zeros((150, 100, config.N_CATEGORIES_RESPONSE))
     probs_all[:, :, 0] = cum_prob[:, :, 0]
     for c in range(1, config.N_CATEGORIES_RESPONSE - 1):
         probs_all[:, :, c] = cum_prob[:, :, c] - cum_prob[:, :, c - 1]
@@ -393,7 +423,7 @@ def plot_category_response_functions(
     ax.set_title(f"Category Response Functions: {question_id}", weight="bold")
     ax.legend(loc="upper left")
     ax.grid(True, linestyle=":", alpha=0.6)
-    plt.savefig(os.path.join(config.PLOTS_DIR, f"crf_{filename_escape(question_id)}.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, f"crf_{filename_escape(question_id)}.png"), bbox_inches="tight")
     plt.close()
 
 
@@ -402,6 +432,7 @@ def plot_predicted_vs_empirical_dist(
         idata: az.InferenceData,
         df_long: pd.DataFrame,
         struct_maps: Dict[str, Any],
+        output_dir: str,
         ci_level: float = 0.95
 ) -> None:
     """
@@ -474,7 +505,7 @@ def plot_predicted_vs_empirical_dist(
     ax.legend()
     ax.grid(axis="y", linestyle=":", alpha=0.6)
 
-    plt.savefig(os.path.join(config.PLOTS_DIR, f"item_fit_{filename_escape(question_id)}.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, f"item_fit_{filename_escape(question_id)}.png"), bbox_inches="tight")
     plt.close()
 
 
@@ -482,6 +513,7 @@ def plot_item_information_function(
         question_id: str,
         idata: az.InferenceData,
         struct_maps: Dict[str, Any],
+        output_dir: str,
         ci_level: float = 0.95
 ) -> None:
     """
@@ -496,23 +528,17 @@ def plot_item_information_function(
     a_samples = idata.posterior["a"].values.reshape(-1, K)[:, q_idx]
     cut_samples = idata.posterior["cutpoints"].values.reshape(-1, K, config.N_CATEGORIES_RESPONSE - 1)[:, q_idx, :]
 
-    # Thin samples to speed up mathematical integration
-    sample_indices = np.linspace(0, len(a_samples) - 1, 150, dtype=int)
-    theta_vals = np.linspace(-3.5, 3.5, 100)
-    info_samples = np.zeros((len(sample_indices), len(theta_vals)))
+    thin_idx = np.linspace(0, len(a_samples) - 1, 150, dtype=int)
+    a_samples = a_samples[thin_idx]
+    cut_samples = cut_samples[thin_idx, :]
 
-    for idx, s_idx in enumerate(sample_indices):
-        a_s = a_samples[s_idx]
-        cuts_s = cut_samples[s_idx]
-        for j, th in enumerate(theta_vals):
-            # Calculate information across ordinal categories
-            eta = a_s * th
-            info_val = 0.0
-            for c in range(config.N_CATEGORIES_RESPONSE - 1):
-                logit = cuts_s[c] - eta
-                P_star = sps.expit(logit)
-                info_val += P_star * (1.0 - P_star)
-            info_samples[idx, j] = info_val * (a_s ** 2)
+    theta_vals = np.linspace(-3.5, 3.5, 100)
+
+    eta = a_samples[:, None] * theta_vals[None, :]
+    logit = cut_samples[:, None, :] - eta[:, :, None]
+    P_star = sps.expit(logit)
+
+    info_samples = np.sum(P_star * (1.0 - P_star), axis=2) * (a_samples[:, None] ** 2)
 
     info_mean = np.mean(info_samples, axis=0)
     lower_perc = (1.0 - ci_level) / 2.0 * 100
@@ -529,13 +555,14 @@ def plot_item_information_function(
     ax.grid(True, linestyle=":", alpha=0.6)
     ax.legend()
 
-    plt.savefig(os.path.join(config.PLOTS_DIR, f"iif_{filename_escape(question_id)}.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, f"iif_{filename_escape(question_id)}.png"), bbox_inches="tight")
     plt.close()
 
 
 def plot_test_information_function(
         idata: az.InferenceData,
         K: int,
+        output_dir: str,
         ci_level: float = 0.95
 ) -> None:
     """
@@ -544,23 +571,18 @@ def plot_test_information_function(
     a_samples = idata.posterior["a"].values.reshape(-1, K)
     cut_samples = idata.posterior["cutpoints"].values.reshape(-1, K, config.N_CATEGORIES_RESPONSE - 1)
 
-    sample_indices = np.linspace(0, len(a_samples) - 1, 100, dtype=int)
-    theta_vals = np.linspace(-3.5, 3.5, 100)
-    tif_samples = np.zeros((len(sample_indices), len(theta_vals)))
+    thin_idx = np.linspace(0, len(a_samples) - 1, 100, dtype=int)
+    a_samples = a_samples[thin_idx, :]
+    cut_samples = cut_samples[thin_idx, :, :]
 
-    for idx, s_idx in enumerate(sample_indices):
-        a_s = a_samples[s_idx]
-        cut_s = cut_samples[s_idx]
-        for j, th in enumerate(theta_vals):
-            total_info = 0.0
-            for k in range(K):
-                a_k = a_s[k]
-                cuts_k = cut_s[k, :]
-                eta = a_k * th
-                for c in range(config.N_CATEGORIES_RESPONSE - 1):
-                    P_star = sps.expit(cuts_k[c] - eta)
-                    total_info += P_star * (1.0 - P_star) * (a_k ** 2)
-            tif_samples[idx, j] = total_info
+    theta_vals = np.linspace(-3.5, 3.5, 100)
+
+    eta = a_samples[:, :, None] * theta_vals[None, None, :]
+    logit = cut_samples[:, :, None, :] - eta[:, :, :, None]
+    P_star = sps.expit(logit)
+
+    info_per_question = np.sum(P_star * (1.0 - P_star), axis=3) * (a_samples[:, :, None] ** 2)
+    tif_samples = np.sum(info_per_question, axis=1)
 
     # Calculate TIF parameters
     tif_mean = np.mean(tif_samples, axis=0)
@@ -596,5 +618,5 @@ def plot_test_information_function(
     ax2.legend(loc="upper right")
 
     plt.title("Test Information Function & Measurement Error bounds", fontsize=12, weight="bold")
-    plt.savefig(os.path.join(config.PLOTS_DIR, "tif_sem_plot.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, "tif_sem_plot.png"), bbox_inches="tight")
     plt.close()

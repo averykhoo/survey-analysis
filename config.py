@@ -19,16 +19,23 @@ MODEL_DIR: str = os.path.join(BASE_DIR, "model")
 DIAGNOSTICS_DIR: str = os.path.join(BASE_DIR, "diagnostics")
 CSV_DIR: str = os.path.join(BASE_DIR, "estimates_csv")
 PLOTS_DIR: str = os.path.join(BASE_DIR, "plots")
+LOWRES_PLOTS_DIR: str = os.path.join(BASE_DIR, "lowres_plots")
 
 # Auto-generate folder structure on system load
-for d in [MODEL_DIR, DIAGNOSTICS_DIR, CSV_DIR, PLOTS_DIR]:
+for d in [MODEL_DIR, DIAGNOSTICS_DIR, CSV_DIR, PLOTS_DIR, LOWRES_PLOTS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 # --- MCMC Sampler Configurations ---
-ITER_WARMUP: int = 1000
+ITER_WARMUP: int = 2000  # Increased warmup steps as a structural crutch for sparse data
 ITER_SAMPLING: int = 1500
-CHAINS: int = 4 # 8 chains takes too much vram when running posterior checks
+CHAINS: int = 4  # 8 chains takes too much vram when running posterior checks
 TARGET_ACCEPT: float = 0.95  # High target accept to prevent divergent transitions
+
+# --- Regularization Hyperparameters ---
+STUDENT_T_NU: float = 5.0  # Degrees of freedom for robust heavy-tailed team baselines
+LKJ_ETA: float = 10.0  # Squeezes section correlations toward zero (strong regularization)
+SIGMA_CAT_PRIOR_SIGMA: float = 0.25  # Tight Half-Normal prior for category-level offsets
+PPC_DRAWS: int = 200  # Thinned draws for posterior predictive checks to prevent VRAM crashes
 
 # --- Statistical Diagnostic Thresholds ---
 RHAT_THRESHOLD: float = 1.05
