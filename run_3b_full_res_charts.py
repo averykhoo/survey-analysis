@@ -60,12 +60,14 @@ def main():
 
     export_df.to_csv(os.path.join(config.CSV_DIR, "hierarchical_team_capability_estimates.csv"), index=False)
 
-    depts = df_raw["dept"].dropna().unique().tolist() + [None]
+    # Dynamic Current-Year Department Selection
     sim_years = sorted(export_df[config.YEAR_COL].unique())
+    latest_year = sim_years[-1]
+    depts = export_df[export_df[config.YEAR_COL] == latest_year]["dept"].dropna().unique().tolist() + [None]
 
-    print(f"\n--- LOOPING OVER DEPARTMENTS: {depts} ---")
+    print(f"\n--- LOOPING OVER CURRENT ERA DEPARTMENTS: {depts} ---")
     for d in depts:
-        print(f"  Rendering high-res plots for department: {d}")
+        print(f"  Rendering high-res plots for lineage of department: {d}")
 
         for s_idx, sec in enumerate(sections_list):
             plotting.plot_slope_chart_hierarchical(export_df, sec, "section", sim_years, config.REORG_LINEAGE_MAP,
@@ -81,7 +83,7 @@ def main():
 
         for sec_name, cats in config.SURVEY_HIERARCHY.items():
             for cat, qs in cats.items():
-                plotting.plot_likert_response_distributions(df_raw, export_df, cat, qs, target_year=sim_years[-1],
+                plotting.plot_likert_response_distributions(df_raw, export_df, cat, qs, target_year=latest_year,
                                                             output_dir=config.PLOTS_DIR, target_dept=d)
 
     plotting.plot_omega_clustermap(

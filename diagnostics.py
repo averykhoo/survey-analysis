@@ -121,7 +121,31 @@ def run_diagnostic_checks(
 
     try:
         # Check scale-indeterminacy loop resolution (a vs sigma_cat)
-        az.plot_pair(idata, var_names=["a", "sigma_cat_raw"], coords={"question": [struct_maps["questions"][0]]}, marginals=True)
+        # Extract the raw 2D NumPy arrays of shape (chain, draw)
+        posterior_dict = {
+            "a_first":             idata.posterior["a"].values[:, :, 0],
+            "sigma_cat_raw_first": idata.posterior["sigma_cat_raw"].values[:, :, 0]
+        }
+
+        try:
+            # Syntax for older ArviZ (0.x)
+            minimal_idata = az.from_dict(posterior=posterior_dict)
+        except TypeError:
+            # Fallback syntax for newer ArviZ (1.x / arviz-base)
+            minimal_idata = az.from_dict({"posterior": posterior_dict})
+
+        # Multi-stage fallback to handle ArviZ 0.x vs 1.x signature parameters
+        try:
+            # 1. Try legacy ArviZ signature (marginals=True)
+            az.plot_pair(minimal_idata, marginals=True)
+        except Exception:
+            try:
+                # 2. Try modern ArviZ/arviz-plots signature (marginal=True)
+                az.plot_pair(minimal_idata, marginal=True)
+            except Exception:
+                # 3. Last-resort fallback: Plot standard pair plot without keyword arguments
+                az.plot_pair(minimal_idata)
+
         plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "pair_scale_indeterminacy_check.png"), bbox_inches="tight")
         plt.close()
         print("  Saved scale-indeterminacy check plot to diagnostics/pair_scale_indeterminacy_check.png.")
@@ -180,7 +204,7 @@ def generate_cpu_posterior_predictive(idata: xarray.DataTree, model: Any) -> xar
 
 def plot_ppc_safely(idata: xarray.DataTree) -> None:
     """
-    Plots PPC check safely, preventing AttributeError crashes if predictive groups are missing.
+    Plots PPC check safely, supporting legacy ArviZ, modern ArviZ 1.x, and arviz_plots.
     """
     # Check if group exists directly using standard dict-like membership check
     if "posterior_predictive" not in idata:
@@ -188,7 +212,23 @@ def plot_ppc_safely(idata: xarray.DataTree) -> None:
         return
 
     try:
-        az.plot_ppc(idata, num_pp_samples=100)
+        # 1. Try legacy ArviZ plot_ppc (0.x)
+        if hasattr(az, "plot_ppc"):
+            az.plot_ppc(idata, num_pp_samples=100)
+        else:
+            # 2. Try modern ArviZ 1.x / arviz_plots plot_ppc_dist (1.x)
+            try:
+                import arviz_plots as azp
+                azp.plot_ppc_dist(idata, num_samples=100)
+            except ImportError:
+                # 3. If arviz-plots is not imported directly, check if it's nested in az
+                if hasattr(az, "plot_ppc_dist"):
+                    az.plot_ppc_dist(idata, num_samples=100)
+                else:
+                    raise AttributeError(
+                        "Neither legacy 'plot_ppc' nor modern 'plot_ppc_dist' could be located in your ArviZ environment."
+                    )
+
         plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "ppc_plot.png"), bbox_inches="tight")
         plt.close()
         print("  Saved posterior predictive check plot to diagnostics/ppc_plot.png.")

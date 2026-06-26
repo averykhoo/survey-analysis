@@ -58,6 +58,39 @@ def get_team_lineage_label(team_id: str, year: int, lineage_map: Dict[int, Dict[
     return team_id
 
 
+def get_dept_ancestor_universe(
+        df_estimates: pd.DataFrame,
+        target_dept: str,
+        lineage_map: Dict[int, Dict[str, List[str]]]
+) -> set:
+    """
+    Locates all teams currently active in target_dept during the latest year,
+    and recursively traverses backward to locate all parent/grandparent ancestor teams.
+    """
+    latest_year = df_estimates[config.YEAR_COL].max()
+    df_latest = df_estimates[df_estimates[config.YEAR_COL] == latest_year]
+    current_dept_teams = df_latest[df_latest["dept"] == target_dept][config.ID_VAR].unique().tolist()
+
+    universe = set(current_dept_teams)
+    all_years = sorted(df_estimates[config.YEAR_COL].unique(), reverse=True)
+
+    queue = list(current_dept_teams)
+    visited = set(current_dept_teams)
+
+    while queue:
+        current_team = queue.pop(0)
+        for yr in all_years:
+            if yr in lineage_map and current_team in lineage_map[yr]:
+                parents = lineage_map[yr][current_team]
+                for p in parents:
+                    if p and p not in visited:
+                        visited.add(p)
+                        queue.append(p)
+                        universe.add(p)
+
+    return universe
+
+
 def plot_slope_chart_hierarchical(
         df_estimates: pd.DataFrame,
         name: str,
@@ -81,7 +114,8 @@ def plot_slope_chart_hierarchical(
     """
     df_plot = df_estimates.copy()
     if target_dept is not None:
-        df_plot = df_plot[df_plot["dept"] == target_dept]
+        universe = get_dept_ancestor_universe(df_plot, target_dept, lineage_map)
+        df_plot = df_plot[df_plot[config.ID_VAR].isin(universe)]
 
     val_col = f"{level}_{name}"
     if val_col not in df_plot.columns or df_plot.empty:
@@ -119,11 +153,13 @@ def plot_slope_chart_hierarchical(
 
     # Map terminal scores to a Spectral Colormap (Lowest -> Red, Highest -> Blue)
     scores = [m["final_score"] for m in team_meta.values()]
-    vmin, vmax = min(scores), max(scores)
-    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-    cmap = plt.colormaps["Spectral"]
-
-    team_colors = {team: cmap(norm(m["final_score"])) for team, m in team_meta.items()}
+    if scores:
+        vmin, vmax = min(scores), max(scores)
+        norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+        cmap = plt.colormaps["Spectral"]
+        team_colors = {team: cmap(norm(m["final_score"])) for team, m in team_meta.items()}
+    else:
+        team_colors = {}
 
     # Plot Nodes
     for yr in available_years:
@@ -140,7 +176,7 @@ def plot_slope_chart_hierarchical(
                     ax.text(yr + offset, val, f"{display_label} (1-Yr)", ha=align, va="center", fontsize=8, color="gray"))
             else:
                 if meta["final_yr"] == final_year_overall:
-                    ax.plot(yr, val, "o", color=team_colors[team], markersize=6)
+                    ax.plot(yr, val, "o", color=team_colors.get(team, "gray"), markersize=6)
                     texts.append(ax.text(yr + offset, val, display_label, ha=align, va="center", fontsize=8))
                 else:
                     ax.plot(yr, val, "o", color="gray", markersize=6)
@@ -157,7 +193,7 @@ def plot_slope_chart_hierarchical(
                 val_to = coords[y_to][child_team]
 
                 if team_meta[child_team]["final_yr"] == final_year_overall:
-                    line_color = team_colors[child_team]
+                    line_color = team_colors.get(child_team, "gray")
                     base_style = "-"
                 else:
                     line_color = "gray"
@@ -226,8 +262,9 @@ def plot_likert_response_distributions(
     df_responses = df_raw[df_raw[config.YEAR_COL] == target_year]
 
     if target_dept:
-        df_overall = df_overall[df_overall["dept"] == target_dept]
-        df_responses = df_responses[df_responses["dept"] == target_dept]
+        current_dept_teams = df_overall[df_overall["dept"] == target_dept][config.ID_VAR].unique().tolist()
+        df_overall = df_overall[df_overall[config.ID_VAR].isin(current_dept_teams)]
+        df_responses = df_responses[df_responses[config.ID_VAR].isin(current_dept_teams)]
 
     if df_overall.empty or df_responses.empty:
         return
@@ -314,7 +351,8 @@ def plot_ridge_plots_hierarchical(
     """
     df_plot = df_estimates.copy()
     if target_dept is not None:
-        df_plot = df_plot[df_plot["dept"] == target_dept]
+        universe = get_dept_ancestor_universe(df_plot, target_dept, config.REORG_LINEAGE_MAP)
+        df_plot = df_plot[df_plot[config.ID_VAR].isin(universe)]
 
     if df_plot.empty:
         return
