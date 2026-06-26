@@ -24,7 +24,7 @@ import seaborn as sns
 from scipy.stats import gaussian_kde
 
 import config
-
+import xarray
 try:
     from adjustText import adjust_text
 
@@ -121,7 +121,7 @@ def plot_slope_chart_hierarchical(
     scores = [m["final_score"] for m in team_meta.values()]
     vmin, vmax = min(scores), max(scores)
     norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-    cmap = plt.cm.get_cmap("Spectral")
+    cmap = plt.colormaps["Spectral"]
 
     team_colors = {team: cmap(norm(m["final_score"])) for team, m in team_meta.items()}
 
@@ -300,7 +300,7 @@ def plot_likert_response_distributions(
 
 
 def plot_ridge_plots_hierarchical(
-        idata: az.InferenceData,
+        idata: xarray.DataTree,
         df_estimates: pd.DataFrame,
         name: str,
         level: str,
@@ -334,7 +334,7 @@ def plot_ridge_plots_hierarchical(
     if num_teams == 1:
         axes = [axes]
 
-    colors = plt.cm.get_cmap("tab10", num_teams)
+    colors = plt.colormaps["tab10"].resampled(num_teams)
     x_vals = np.linspace(-3.5, 3.5, 100)
 
     for i, team in enumerate(unique_teams):
@@ -381,7 +381,7 @@ def plot_ridge_plots_hierarchical(
 
 def plot_category_response_functions(
         question_id: str,
-        idata: az.InferenceData,
+        idata: xarray.DataTree,
         struct_maps: Dict[str, Any],
         output_dir: str
 ) -> None:
@@ -429,7 +429,7 @@ def plot_category_response_functions(
 
 def plot_predicted_vs_empirical_dist(
         question_id: str,
-        idata: az.InferenceData,
+        idata: xarray.DataTree,
         df_long: pd.DataFrame,
         struct_maps: Dict[str, Any],
         output_dir: str,
@@ -511,7 +511,7 @@ def plot_predicted_vs_empirical_dist(
 
 def plot_item_information_function(
         question_id: str,
-        idata: az.InferenceData,
+        idata: xarray.DataTree,
         struct_maps: Dict[str, Any],
         output_dir: str,
         ci_level: float = 0.95
@@ -560,7 +560,7 @@ def plot_item_information_function(
 
 
 def plot_test_information_function(
-        idata: az.InferenceData,
+        idata: xarray.DataTree,
         K: int,
         output_dir: str,
         ci_level: float = 0.95

@@ -18,10 +18,11 @@ import numpy as np
 import pandas as pd
 
 import config
+import xarray
 
 
 def run_diagnostic_checks(
-        idata: az.InferenceData,
+        idata: xarray.DataTree,
         df_long: pd.DataFrame,
         struct_maps: Dict[str, Any]
 ) -> Tuple[List[str], pd.DataFrame]:
@@ -154,7 +155,7 @@ def run_diagnostic_checks(
     return warnings_found, summary
 
 
-def generate_cpu_posterior_predictive(idata: az.InferenceData, model: Any) -> az.InferenceData:
+def generate_cpu_posterior_predictive(idata: xarray.DataTree, model: Any) -> xarray.DataTree:
     """
     Safely compiles and runs PPC on the CPU using a thinned draw subset to prevent VRAM crashes.
     """
@@ -163,21 +164,26 @@ def generate_cpu_posterior_predictive(idata: az.InferenceData, model: Any) -> az
     os.environ["JAX_PLATFORM_NAME"] = "cpu"
     import pymc as pm
 
+    # Thin the inference data to PPC_DRAWS across draws to prevent OOM/VRAM crashes
+    total_draws = len(idata.posterior.draw)
+    step = max(1, total_draws // config.PPC_DRAWS)
+    thinned_idata = idata.sel(draw=slice(None, None, step))
+
     with model:
         idata_ppc = pm.sample_posterior_predictive(
-            idata,
-            predictions_to_sample=config.PPC_DRAWS,
+            thinned_idata,
             extend_inferencedata=True,
             random_seed=config.RANDOM_SEED
         )
     return idata_ppc
 
 
-def plot_ppc_safely(idata: az.InferenceData) -> None:
+def plot_ppc_safely(idata: xarray.DataTree) -> None:
     """
     Plots PPC check safely, preventing AttributeError crashes if predictive groups are missing.
     """
-    if "posterior_predictive" not in idata.groups():
+    # Check if group exists directly using standard dict-like membership check
+    if "posterior_predictive" not in idata:
         print("  [SKIPPED] Posterior predictive plot skipped: 'posterior_predictive' group not found in container.")
         return
 

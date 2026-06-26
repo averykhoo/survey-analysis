@@ -32,7 +32,7 @@ def main():
     print(f"Elapsed time for LOADING: {time.time() - sec_start:.2f} seconds")
 
     posterior_means = idata.posterior.mean(dim=["chain", "draw"])
-    hdis = az.hdi(idata, hdi_prob=0.95)
+    hdis = az.hdi(idata, prob=0.95)
 
     sections_list = struct_maps["sections"]
     categories_list = struct_maps["categories"]

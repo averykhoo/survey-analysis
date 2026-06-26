@@ -965,7 +965,7 @@ def run_diagnostic_checks(fit, samples, stan_data, df_long,
     summary = None
     if idata is not None:
         try:
-            summary = az.summary(idata, round_to=3, kind='diagnostics', hdi_prob=0.94)  # Use 'stats' kind
+            summary = az.summary(idata, round_to=3, kind='diagnostics', prob=0.94)  # Use 'stats' kind
             print("ArviZ summary generated.")
         except Exception as e:
             print(f"ERROR generating ArviZ summary: {e}")

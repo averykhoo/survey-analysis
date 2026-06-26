@@ -1130,7 +1130,7 @@ def main():
     print("\n--- Section 6: Extracting and Processing Results ---")
 
     # Calculate HDI intervals (95% default)
-    hdis = az.hdi(idata, hdi_prob=0.95)
+    hdis = az.hdi(idata, prob=0.95)
 
     posterior_means = idata.posterior.mean(dim=["chain", "draw"])
     category_names_final = list(cat_idx_to_name_final.values())

@@ -1,5 +1,4 @@
 adjustText
-arviz
 matplotlib
 numpy
 pandas
@@ -7,11 +6,20 @@ pymc>=5.0.0
 pytensor
 scipy
 seaborn
+xarray
+arviz
+arviz-base
+arviz-stats
+arviz-plots
+h5netcdf
+h5py
 
 numba
 numpyro
 jax
+#jax[cuda12]
 #conda install mkl mkl-service openblas pytensor  --update-all
+#conda install python-graphviz
 
 scipy-stubs
 pandas-stubs

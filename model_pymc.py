@@ -13,7 +13,7 @@ from typing import Any
 from typing import Dict
 from typing import Tuple
 
-import arviz as az
+import xarray
 import pandas as pd
 import pymc as pm
 import pymc.sampling.jax as pm_jax
@@ -52,7 +52,7 @@ def build_and_run_model(
         df_long: pd.DataFrame,
         struct_maps: Dict[str, Any],
         run_sampling: bool = True,
-) -> Tuple[az.InferenceData, pm.Model]:
+) -> Tuple[xarray.DataTree, pm.Model]:
     """
     Constructs and samples the hierarchical MGRM. Compiles GraphViz representation.
 
@@ -141,14 +141,33 @@ def build_and_run_model(
                 n_multi = len(multi_item_cats_in_s)
                 # Sample block Cholesky for offsets within this section
                 z_block = pm.StudentT(f"z_block_{s_idx}", nu=config.STUDENT_T_NU, mu=0, sigma=1, shape=(n_multi, J))
-                chol_cov_block, corr_block, std_block = pm.LKJCholeskyCov(
-                    f"chol_cov_block_{s_idx}", n=n_multi, eta=config.LKJ_ETA, sd_dist=pm.HalfNormal.dist(0.5)
-                )
-                chol_corr_block = chol_cov_block / std_block[:, None]
+
+                # Check for 2x2 blocks to bypass the PyTensor rewrite Scan bug
+                if n_multi == 2:
+                    # rho is the correlation coefficient between the two categories
+                    # Restricting to [-0.99, 0.99] ensures numerical stability in sqrt(1 - rho^2)
+                    rho = pm.Uniform(f"rho_block_{s_idx}", lower=-0.99, upper=0.99)
+
+                    # Manually construct 2x2 Cholesky correlation matrix
+                    row1 = pt.stack([1.0, 0.0])
+                    row2 = pt.stack([rho, pt.sqrt(1.0 - pt.square(rho))])
+                    chol_corr_block = pt.stack([row1, row2])
+                else:
+                    # Fallback general block-Cholesky if you change the hierarchy in the future
+                    chol_cov_block, corr_block, std_block = pm.LKJCholeskyCov(
+                        f"chol_cov_block_{s_idx}", n=n_multi, eta=config.LKJ_ETA, sd_dist=pm.HalfNormal.dist(0.5)
+                    )
+                    chol_corr_block = chol_cov_block / std_block[:, None]
+
                 rotated_block = pt.dot(chol_corr_block, z_block).T  # (J, n_multi)
 
                 for idx, c in enumerate(multi_item_cats_in_s):
                     category_offsets[c] = rotated_block[:, idx] * sigma_cat[c]
+
+                # Populate single-item categories in this section that were skipped
+                for c in cats_in_s:
+                    if is_multi_item_mask[c] == 0.0:
+                        category_offsets[c] = z_cat_indep[c, :] * sigma_cat[c]
             else:
                 for c in cats_in_s:
                     category_offsets[c] = z_cat_indep[c, :] * sigma_cat[c]

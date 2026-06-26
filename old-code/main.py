@@ -75,7 +75,7 @@ def main():
     print("\n--- SECTION 6: PROCESSING PARAMETER EXPORT FILES ---")
     sec_start = time.time()
     posterior_means = idata.posterior.mean(dim=["chain", "draw"])
-    hdis = az.hdi(idata, hdi_prob=0.95)
+    hdis = az.hdi(idata, prob=0.95)
 
     sections_list = struct_maps["sections"]
     categories_list = struct_maps["categories"]

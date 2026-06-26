@@ -1,101 +1,78 @@
 # -*- coding: utf-8 -*-
 """
-run_3b_full_res_charts.py
+run_2_diagnostics.py
 
-Orchestration pipeline for Part 3b: Generate high-resolution analytical plots
-(using full available draws) inside the standard 'plots' subdirectory.
+Orchestration pipeline for Part 2: Load serialized inference structures,
+rebuild model context, run thinned posterior predictive checks on the CPU,
+execute diagnostics, and generate diagnostic plots.
 """
 
 import time
 import os
 import pickle
-import arviz as az
 import pandas as pd
-import numpy as np
+import arviz as az
 import config
-import plotting
+import diagnostics
+import model_pymc
 
 
 def main():
     total_start = time.time()
 
-    print("--- PART 3b: RUNNING HIGH-RESOLUTION ANALYTICAL PLOTTING ---")
+    print("--- PART 2: LOADING TRACE FOR FIT DIAGNOSTICS ---")
     sec_start = time.time()
 
-    df_raw = pd.read_pickle(os.path.join(config.MODEL_DIR, "df_raw.pkl"))
     df_long = pd.read_pickle(os.path.join(config.MODEL_DIR, "df_long.pkl"))
-
     with open(os.path.join(config.MODEL_DIR, "struct_maps.pkl"), "rb") as f:
         struct_maps = pickle.load(f)
 
+    # Load posteriors, pull them fully into memory, and release the disk file lock
     idata = az.from_netcdf(os.path.join(config.MODEL_DIR, "dora_inference_data.nc"))
-    print(f"Elapsed time for LOADING: {time.time() - sec_start:.2f} seconds")
+    idata.load()
+    idata.close()
+    print(f"Elapsed time for SECTION 1: {time.time() - sec_start:.2f} seconds")
 
-    posterior_means = idata.posterior.mean(dim=["chain", "draw"])
-    hdis = az.hdi(idata, hdi_prob=0.95)
+    print("\n--- PART 2: COMPILING THINNED CPU POSTERIOR PREDICTIVE ---")
+    sec_start = time.time()
 
-    sections_list = struct_maps["sections"]
-    categories_list = struct_maps["categories"]
-    J = len(struct_maps["group_idx_map"])
+    _, dummy_model = model_pymc.build_and_run_model(df_long, struct_maps, run_sampling=False)
+    idata = diagnostics.generate_cpu_posterior_predictive(idata, dummy_model)
+    idata.to_netcdf(os.path.join(config.MODEL_DIR, "dora_inference_data.nc"))
+    print(f"Elapsed time for SECTION 2: {time.time() - sec_start:.2f} seconds")
 
-    export_df = pd.DataFrame()
-    export_df["group_idx"] = np.arange(J)
-    reverse_group_map = {v: k for k, v in struct_maps["group_idx_map"].items()}
-    export_df["group"] = export_df["group_idx"].map(reverse_group_map)
-    export_df[[config.ID_VAR, config.YEAR_COL]] = export_df["group"].str.split("|", expand=True)
-    export_df[config.YEAR_COL] = export_df[config.YEAR_COL].astype(int)
+    print("\n--- PART 2: COMPUTING CONVERGENCE DIAGNOSTICS ---")
+    sec_start = time.time()
+    warnings, summary = diagnostics.run_diagnostic_checks(idata, df_long, struct_maps)
 
-    team_to_dept_map = df_raw[[config.ID_VAR, "dept"]].drop_duplicates().set_index(config.ID_VAR)["dept"].to_dict()
-    export_df["dept"] = export_df[config.ID_VAR].map(team_to_dept_map)
+    warning_path = os.path.join(config.DIAGNOSTICS_DIR, "diagnostic_warnings.log")
+    with open(warning_path, "w") as f:
+        if warnings:
+            f.write("--- SYSTEM MODEL CONVERGENCE CRITICAL WARNINGS ---\n")
+            for w in warnings:
+                f.write(f"* {w}\n")
+        else:
+            f.write("All statistical convergence checks passed stably.\n")
 
-    for s_idx, sec in enumerate(sections_list):
-        export_df[f"section_{sec}"] = posterior_means["theta_sec"].values[:, s_idx]
-        export_df[f"section_{sec}_hdi_lower"] = hdis["theta_sec"].values[:, s_idx, 0]
-        export_df[f"section_{sec}_hdi_upper"] = hdis["theta_sec"].values[:, s_idx, 1]
+    print(f"  Warning logs saved to '{warning_path}'")
+    print(f"Elapsed time for SECTION 3: {time.time() - sec_start:.2f} seconds")
 
-    for c_idx, cat in enumerate(categories_list):
-        export_df[f"category_{cat}"] = posterior_means["theta_cat"].values[:, c_idx]
-        export_df[f"category_{cat}_hdi_lower"] = hdis["theta_cat"].values[:, c_idx, 0]
-        export_df[f"category_{cat}_hdi_upper"] = hdis["theta_cat"].values[:, c_idx, 1]
+    print("\n--- PART 2: RENDERING STATISTICAL DIAGNOSTIC PLOTS ---")
+    sec_start = time.time()
+    diagnostics.plot_ppc_safely(idata)
 
-    export_df.to_csv(os.path.join(config.CSV_DIR, "hierarchical_team_capability_estimates.csv"), index=False)
+    try:
+        import matplotlib.pyplot as plt
+        az.plot_trace(idata, var_names=["a"])
+        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "trace_plots.png"), bbox_inches="tight")
+        plt.close()
+    except Exception as e:
+        print(f"  [SKIPPED] Trace Graph failed: {e}")
 
-    depts = df_raw["dept"].dropna().unique().tolist() + [None]
-    sim_years = sorted(export_df[config.YEAR_COL].unique())
-
-    print(f"\n--- LOOPING OVER DEPARTMENTS: {depts} ---")
-    for d in depts:
-        print(f"  Rendering high-res plots for department: {d}")
-
-        for s_idx, sec in enumerate(sections_list):
-            plotting.plot_slope_chart_hierarchical(export_df, sec, "section", sim_years, config.REORG_LINEAGE_MAP,
-                                                   config.PLOTS_DIR, target_dept=d)
-            plotting.plot_ridge_plots_hierarchical(idata, export_df, sec, "section", s_idx, draws_to_use=6000,
-                                                   output_dir=config.PLOTS_DIR, target_dept=d)
-
-        for c_idx, cat in enumerate(categories_list):
-            plotting.plot_slope_chart_hierarchical(export_df, cat, "category", sim_years, config.REORG_LINEAGE_MAP,
-                                                   config.PLOTS_DIR, target_dept=d)
-            plotting.plot_ridge_plots_hierarchical(idata, export_df, cat, "category", c_idx, draws_to_use=6000,
-                                                   output_dir=config.PLOTS_DIR, target_dept=d)
-
-        for sec_name, cats in config.SURVEY_HIERARCHY.items():
-            for cat, qs in cats.items():
-                plotting.plot_likert_response_distributions(df_raw, export_df, cat, qs, target_year=sim_years[-1],
-                                                            output_dir=config.PLOTS_DIR, target_dept=d)
-
-    plotting.plot_omega_clustermap(
-        pd.DataFrame(posterior_means["Omega"].values, index=sections_list, columns=sections_list), config.PLOTS_DIR)
-
-    for q_name in struct_maps["questions"]:
-        plotting.plot_category_response_functions(q_name, idata, struct_maps, config.PLOTS_DIR)
-        plotting.plot_predicted_vs_empirical_dist(q_name, idata, df_long, struct_maps, config.PLOTS_DIR)
-        plotting.plot_item_information_function(q_name, idata, struct_maps, config.PLOTS_DIR)
-
-    plotting.plot_test_information_function(idata, len(struct_maps["questions"]), config.PLOTS_DIR)
+    print(f"Elapsed time for SECTION 4: {time.time() - sec_start:.2f} seconds")
 
     print(f"\n=======================================================")
-    print(f"Part 3b Full Resolution Charts Completed in {time.time() - total_start:.1f} total seconds.")
+    print(f"Part 2 Diagnostics Completed in {time.time() - total_start:.1f} total seconds.")
     print(f"=======================================================")
 
 
