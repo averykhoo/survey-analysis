@@ -79,21 +79,21 @@ def main():
             plotting.plot_ridge_plots_hierarchical(idata, export_df, cat, "category", c_idx, draws_to_use=300,
                                                    output_dir=config.LOWRES_PLOTS_DIR, target_dept=d)
 
-        for sec_name, cats in config.SURVEY_HIERARCHY.items():
-            for cat, qs in cats.items():
-                plotting.plot_likert_response_distributions(df_raw, export_df, cat, qs, target_year=latest_year,
-                                                            output_dir=config.LOWRES_PLOTS_DIR, target_dept=d)
+        # for sec_name, cats in config.SURVEY_HIERARCHY.items():
+        #     for cat, qs in cats.items():
+        #         plotting.plot_likert_response_distributions(df_raw, export_df, cat, qs, target_year=latest_year,
+        #                                                     output_dir=config.LOWRES_PLOTS_DIR, target_dept=d)
 
-    plotting.plot_omega_clustermap(
-        pd.DataFrame(posterior_means["Omega"].values, index=sections_list, columns=sections_list),
-        config.LOWRES_PLOTS_DIR)
+    # plotting.plot_omega_clustermap(
+    #     pd.DataFrame(posterior_means["Omega"].values, index=sections_list, columns=sections_list),
+    #     config.LOWRES_PLOTS_DIR)
 
-    for q_name in struct_maps["questions"]:
-        plotting.plot_category_response_functions(q_name, idata, struct_maps, config.LOWRES_PLOTS_DIR)
-        plotting.plot_predicted_vs_empirical_dist(q_name, idata, df_long, struct_maps, config.LOWRES_PLOTS_DIR)
-        plotting.plot_item_information_function(q_name, idata, struct_maps, config.LOWRES_PLOTS_DIR)
-
-    plotting.plot_test_information_function(idata, len(struct_maps["questions"]), config.LOWRES_PLOTS_DIR)
+    # for q_name in struct_maps["questions"]:
+    #     plotting.plot_category_response_functions(q_name, idata, struct_maps, config.LOWRES_PLOTS_DIR)
+    #     plotting.plot_predicted_vs_empirical_dist(q_name, idata, df_long, struct_maps, config.LOWRES_PLOTS_DIR)
+    #     plotting.plot_item_information_function(q_name, idata, struct_maps, config.LOWRES_PLOTS_DIR)
+    #
+    # plotting.plot_test_information_function(idata, len(struct_maps["questions"]), config.LOWRES_PLOTS_DIR)
 
     print(f"\n=======================================================")
     print(f"Part 3a Fast Charts Completed in {time.time() - total_start:.1f} total seconds.")
