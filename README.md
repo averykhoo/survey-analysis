@@ -1,6 +1,6 @@
 # dora survey analysis
 
-![model](./dora_analysis_output_pymc/model/model_dag.png)
+![model](./dora_analysis_output_pymc/model/model_dag.svg)
 
 ```mermaid
 flowchart LR

@@ -206,8 +206,8 @@ def build_and_run_model(
         # --- GraphViz DAG Export ---
         try:
             g = pm.model_to_graphviz(dora_hmgrm)
-            g.render(filename=os.path.join(config.MODEL_DIR, 'model_dag'), format='png', cleanup=True)
-            print("  Successfully saved Model DAG representation to model_dag.png")
+            g.render(filename=os.path.join(config.MODEL_DIR, 'model_dag'), format='svg', cleanup=True)
+            print("  Successfully saved Model DAG representation to model_dag.svg")
         except Exception as e:
             print(f"  [SKIPPED] GraphViz DAG representation (Install graphviz system binaries): {e}")
 
