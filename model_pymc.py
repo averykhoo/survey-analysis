@@ -83,6 +83,9 @@ def build_and_run_model(
     for c, s in enumerate(category_to_section):
         section_to_cats[s].append(c)
 
+    # Compute maximum block size to prevent PyTensor's Scan rewrite bug
+    max_n_multi = max([len([c for c in section_to_cats[s_idx] if is_multi_item_mask[c] == 1.0]) for s_idx in range(S_sec)] + [2])
+
     with pm.Model() as dora_hmgrm:
         # ----------------------------------------------------
         # PRIORS & SENSITIVITY TESTING OPTIONS
@@ -153,10 +156,12 @@ def build_and_run_model(
                     row2 = pt.stack([rho, pt.sqrt(1.0 - pt.square(rho))])
                     chol_corr_block = pt.stack([row1, row2])
                 else:
-                    # Fallback general block-Cholesky if you change the hierarchy in the future
-                    chol_cov_block, corr_block, std_block = pm.LKJCholeskyCov(
-                        f"chol_cov_block_{s_idx}", n=n_multi, eta=config.LKJ_ETA, sd_dist=pm.HalfNormal.dist(0.5)
+                    # Fallback general block-Cholesky with max padding to avoid PyTensor scan bug
+                    chol_cov_block_pad, corr_block_pad, std_block_pad = pm.LKJCholeskyCov(
+                        f"chol_cov_block_{s_idx}", n=max_n_multi, eta=config.LKJ_ETA, sd_dist=pm.HalfNormal.dist(0.5)
                     )
+                    chol_cov_block = chol_cov_block_pad[:n_multi, :n_multi]
+                    std_block = std_block_pad[:n_multi]
                     chol_corr_block = chol_cov_block / std_block[:, None]
 
                 rotated_block = pt.dot(chol_corr_block, z_block).T  # (J, n_multi)

@@ -24,7 +24,7 @@ def main():
     df_raw, true_params = data_utils.simulate_dora_data_reorg(
         sim_years_reorg=sim_years,
         lineage_map=config.REORG_LINEAGE_MAP,
-        sim_n_resp_per_team_year=25,
+        sim_n_resp_per_team_year=5,
         hierarchy_map=config.SURVEY_HIERARCHY,
         response_options_sim=config.RESPONSE_OPTIONS
     )

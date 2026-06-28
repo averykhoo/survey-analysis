@@ -26,8 +26,8 @@ for d in [MODEL_DIR, DIAGNOSTICS_DIR, CSV_DIR, PLOTS_DIR, LOWRES_PLOTS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 # --- MCMC Sampler Configurations ---
-ITER_WARMUP: int = 2000  # Increased warmup steps as a structural crutch for sparse data
-ITER_SAMPLING: int = 1500
+ITER_WARMUP: int = 200  # Increased warmup steps as a structural crutch for sparse data
+ITER_SAMPLING: int = 150
 CHAINS: int = 4  # 8 chains takes too much vram when running posterior checks
 TARGET_ACCEPT: float = 0.95  # High target accept to prevent divergent transitions
 
