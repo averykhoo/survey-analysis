@@ -364,43 +364,75 @@ def plot_ridge_plots_hierarchical(
     step_size = max(1, total_samples // draws_to_use)
     samples = raw_samples[:, :, ::step_size]
 
-    unique_teams = sorted(df_plot[config.ID_VAR].unique())
     unique_years = sorted(df_plot[config.YEAR_COL].unique())
-    num_teams = len(unique_teams)
+    if not unique_years:
+        return
+    latest_year = unique_years[-1]
+
+    # Only create subplots for Terminal Teams (active in the latest year)
+    terminal_teams = sorted(df_plot[df_plot[config.YEAR_COL] == latest_year][config.ID_VAR].unique())
+    num_teams = len(terminal_teams)
+    if num_teams == 0:
+        return
 
     fig, axes = plt.subplots(num_teams, 1, figsize=(13, 2.5 * num_teams), sharex=True)
     if num_teams == 1:
         axes = [axes]
 
-    colors = plt.colormaps["tab10"].resampled(num_teams)
+    colors = plt.colormaps["tab10"].resampled(max(10, num_teams))
     x_vals = np.linspace(-3.5, 3.5, 100)
 
-    for i, team in enumerate(unique_teams):
+    for i, terminal_team in enumerate(terminal_teams):
         ax = axes[i]
-        team_color = colors(i)
+        team_color = colors(i % 10)
         ax.axhline(0, color="#1f4e78", linestyle=":", lw=1.5, zorder=0)
 
+        # 1. Trace the lineage backwards from this terminal team
+        lineage = {latest_year: [terminal_team]}
+        years_desc = sorted(unique_years, reverse=True)
+        for j in range(len(years_desc) - 1):
+            y_curr = years_desc[j]
+            y_prev = years_desc[j + 1]
+            lineage[y_prev] = []
+            for t in lineage[y_curr]:
+                lineage[y_prev].extend(config.REORG_LINEAGE_MAP.get(y_curr, {}).get(t, []))
+            lineage[y_prev] = list(set(lineage[y_prev]))
+
+        max_y = 0  # Track max density height to scale y-axis for labels
+
+        # 2. Plot all mapped ancestor teams onto this terminal team's axis
         for yr in unique_years:
-            rows = df_plot[(df_plot[config.ID_VAR] == team) & (df_plot[config.YEAR_COL] == yr)]
-            if rows.empty:
-                continue
-            grp_idx = rows["group_idx"].values[0]
+            for team in lineage.get(yr, []):
+                rows = df_plot[(df_plot[config.ID_VAR] == team) & (df_plot[config.YEAR_COL] == yr)]
+                if rows.empty:
+                    continue
+                grp_idx = rows["group_idx"].values[0]
 
-            group_samples = samples[grp_idx, idx, :]
-            kde = gaussian_kde(group_samples)
-            y_vals = kde(x_vals)
+                group_samples = samples[grp_idx, idx, :]
+                kde = gaussian_kde(group_samples)
+                y_vals = kde(x_vals)
 
-            if yr == 2023:
-                ax.plot(x_vals, y_vals, color=team_color, lw=2, zorder=3)
-            elif yr == 2025:
-                ax.plot(x_vals, y_vals, color=team_color, lw=2, zorder=3)
-                ax.fill_between(x_vals, y_vals, color="none", edgecolor=team_color, hatch="////", lw=0, zorder=2)
-            elif yr == 2026:
-                ax.fill_between(x_vals, y_vals, color=team_color, alpha=0.8, zorder=1)
+                max_y = max(max_y, np.max(y_vals))
 
-        ax.set_ylabel(team, rotation=0, ha="right", va="center", fontsize=11, weight="bold", labelpad=15)
+                if yr == 2023:
+                    ax.plot(x_vals, y_vals, color=team_color, lw=2, zorder=3)
+                elif yr == 2025:
+                    ax.plot(x_vals, y_vals, color=team_color, lw=2, zorder=3)
+                    ax.fill_between(x_vals, y_vals, color="none", edgecolor=team_color, hatch="////", lw=0, zorder=2)
+                elif yr == 2026:
+                    ax.fill_between(x_vals, y_vals, color=team_color, alpha=0.8, zorder=1)
+
+                # Annotate historical team peaks if the name differs from the terminal name
+                if team != terminal_team:
+                    peak_x = x_vals[np.argmax(y_vals)]
+                    peak_y = np.max(y_vals)
+                    ax.text(peak_x, peak_y * 1.05, f"{team} ({yr})",
+                            ha="center", va="bottom", fontsize=9, color=team_color, weight="bold", alpha=0.75)
+
+        ax.set_ylim(bottom=0, top=max_y * 1.30 if max_y > 0 else 1)  # Pad top so text isn't cut off
+        ax.set_ylabel(terminal_team, rotation=0, ha="right", va="center", fontsize=11, weight="bold", labelpad=15)
         ax.yaxis.set_ticks([])
-        ax.set_ylim(bottom=0)
+
         for spine in ["top", "right", "left", "bottom"]:
             ax.spines[spine].set_visible(False)
 

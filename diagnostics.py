@@ -186,6 +186,10 @@ def generate_cpu_posterior_predictive(idata: xarray.DataTree, model: Any) -> xar
     print("\n--- RUNNING CPU-BASED POSTERIOR PREDICTIVE SIMULATIONS ---")
     import os
     os.environ["JAX_PLATFORM_NAME"] = "cpu"
+
+    # print("\n--- RUNNING POSTERIOR PREDICTIVE SIMULATIONS ---")
+    # os.environ["JAX_PLATFORM_NAME"] = ""
+    # del os.environ["JAX_PLATFORM_NAME"]  # allow using gpu
     import pymc as pm
 
     # Thin the inference data to PPC_DRAWS across draws to prevent OOM/VRAM crashes

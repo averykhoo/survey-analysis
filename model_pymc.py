@@ -13,11 +13,11 @@ from typing import Any
 from typing import Dict
 from typing import Tuple
 
-import xarray
 import pandas as pd
 import pymc as pm
 import pymc.sampling.jax as pm_jax
 import pytensor.tensor as pt
+import xarray
 
 import config
 import data_utils
@@ -42,7 +42,7 @@ try:
 
     except ImportError:
         print('FOUND NUMPYRO (CPU ONLY)')
-        numpyro.set_host_device_count(48)  # many cores in prod server, decrease when testing
+        numpyro.set_host_device_count(48)  # Adjust based on production environment cores
 
 except ImportError:
     HAS_NUMPYRO = False
@@ -54,7 +54,8 @@ def build_and_run_model(
         run_sampling: bool = True,
 ) -> Tuple[xarray.DataTree, pm.Model]:
     """
-    Constructs and samples the hierarchical MGRM. Compiles GraphViz representation.
+    Constructs and samples the hierarchical MGRM.
+    Simplified to independent Normal category offsets for production stability.
 
     Args:
         df_long: Parsed observation row table.
@@ -78,13 +79,13 @@ def build_and_run_model(
 
     smart_inits = data_utils.generate_smart_init(df_long, K, C_resp)
 
-    # Establish reverse-mapping lists to construct block-Cholesky groups
-    section_to_cats = {s: [] for s in range(S_sec)}
-    for c, s in enumerate(category_to_section):
-        section_to_cats[s].append(c)
+    ## Establish reverse-mapping lists to construct block-Cholesky groups
+    # section_to_cats = {s: [] for s in range(S_sec)}
+    # for c, s in enumerate(category_to_section):
+    #    section_to_cats[s].append(c)
 
-    # Compute maximum block size to prevent PyTensor's Scan rewrite bug
-    max_n_multi = max([len([c for c in section_to_cats[s_idx] if is_multi_item_mask[c] == 1.0]) for s_idx in range(S_sec)] + [2])
+    ## Compute maximum block size to prevent PyTensor's Scan rewrite bug
+    # max_n_multi = max([len([c for c in section_to_cats[s_idx] if is_multi_item_mask[c] == 1.0]) for s_idx in range(S_sec)] + [2])
 
     with pm.Model() as dora_hmgrm:
         # ----------------------------------------------------
@@ -94,12 +95,16 @@ def build_and_run_model(
         # --- Parameter 1: Question Discrimination (a) ---
         # Default Prior: LogNormal ensures strict positivity.
         # Sensitivity Check: pm.LogNormal("a", mu=0.0, sigma=1.0) for wider variance.
-        a = pm.LogNormal("a", mu=0.0, sigma=0.5, shape=K)
+        # a = pm.LogNormal("a", mu=0.0, sigma=0.5, shape=K)
+        # Tightened prior (sigma=0.15) to resolve scale-indeterminacy loop with sigma_cat
+        # a = pm.LogNormal("a", mu=0.0, sigma=0.15, shape=K)
+        a = pm.Deterministic("a", pt.ones(K))  # Freeze Discrimination (Downgrade to a Rasch Model)
 
         # --- Parameter 2: Robust Cutpoints ---
         # Gamma prior enforces minimum spacing, preventing threshold crossings during warmup
         first_cut = pm.Normal("first_cut", mu=-1.5, sigma=2.0, shape=(K, 1), initval=smart_inits["first_cut"])
-        cut_diffs = pm.Gamma("cut_diffs", alpha=3.0, beta=4.0, shape=(K, C_resp - 2), initval=smart_inits["cut_diffs"])
+        # cut_diffs = pm.Gamma("cut_diffs", alpha=3.0, beta=4.0, shape=(K, C_resp - 2), initval=smart_inits["cut_diffs"])
+        cut_diffs = pm.Gamma("cut_diffs", alpha=5.0, beta=5.0, shape=(K, C_resp - 2), initval=smart_inits["cut_diffs"])
 
         cutpoints = pm.Deterministic(
             "cutpoints",
@@ -110,7 +115,8 @@ def build_and_run_model(
         # LEVEL 1: Section Scores (Correlated Robust baselines)
         # ----------------------------------------------------
         # Student's t baseline protects against over-shrinking highly extreme teams
-        z_sec = pm.StudentT("z_sec", nu=config.STUDENT_T_NU, mu=0, sigma=1, shape=(S_sec, J))
+        # z_sec = pm.StudentT("z_sec", nu=config.STUDENT_T_NU, mu=0, sigma=1, shape=(S_sec, J))
+        z_sec = pm.Normal("z_sec", mu=0, sigma=1, shape=(S_sec, J))
 
         # Sample correlation Cholesky directly with high eta regularization.
         # LKJ Cholesky Prior models the structural correlation between high-level Sections.
@@ -126,59 +132,70 @@ def build_and_run_model(
         # Final Section Scores: (J, S_sec)
         theta_sec = pm.Deterministic("theta_sec", pt.dot(chol_corr_sec, z_sec).T)
 
+        # Expose Omega for diagnostics
+        pm.Deterministic("Omega", corr_sec)
+
         # ----------------------------------------------------
         # LEVEL 2: Block-Cholesky Nested Category Scores
         # ----------------------------------------------------
-        category_offsets = [None] * C_cat
+        # category_offsets = [None] * C_cat
+        # sigma_cat_raw = pm.HalfNormal("sigma_cat_raw", sigma=config.SIGMA_CAT_PRIOR_SIGMA, shape=C_cat)
+        #
+        # # Clamp 1-question category variances strictly to 0
+        # sigma_cat = pm.Deterministic("sigma_cat", sigma_cat_raw * is_multi_item_mask)
+        # z_cat_indep = pm.StudentT("z_cat_indep", nu=config.STUDENT_T_NU, mu=0, sigma=1, shape=(C_cat, J))
+        #
+        # for s_idx in range(S_sec):
+        #     cats_in_s = section_to_cats[s_idx]
+        #     multi_item_cats_in_s = [c for c in cats_in_s if is_multi_item_mask[c] == 1.0]
+        #
+        #     if len(multi_item_cats_in_s) > 1:
+        #         n_multi = len(multi_item_cats_in_s)
+        #         # Sample block Cholesky for offsets within this section
+        #         z_block = pm.StudentT(f"z_block_{s_idx}", nu=config.STUDENT_T_NU, mu=0, sigma=1, shape=(n_multi, J))
+        #
+        #         # Check for 2x2 blocks to bypass the PyTensor rewrite Scan bug
+        #         if n_multi == 2:
+        #             # rho is the correlation coefficient between the two categories
+        #             # Restricting to [-0.99, 0.99] ensures numerical stability in sqrt(1 - rho^2)
+        #             rho = pm.Uniform(f"rho_block_{s_idx}", lower=-0.99, upper=0.99)
+        #
+        #             # Manually construct 2x2 Cholesky correlation matrix
+        #             row1 = pt.stack([1.0, 0.0])
+        #             row2 = pt.stack([rho, pt.sqrt(1.0 - pt.square(rho))])
+        #             chol_corr_block = pt.stack([row1, row2])
+        #         else:
+        #             # Fallback general block-Cholesky with max padding to avoid PyTensor scan bug
+        #             chol_cov_block_pad, corr_block_pad, std_block_pad = pm.LKJCholeskyCov(
+        #                 f"chol_cov_block_{s_idx}", n=max_n_multi, eta=config.LKJ_ETA, sd_dist=pm.HalfNormal.dist(0.5)
+        #             )
+        #             chol_cov_block = chol_cov_block_pad[:n_multi, :n_multi]
+        #             std_block = std_block_pad[:n_multi]
+        #             chol_corr_block = chol_cov_block / std_block[:, None]
+        #
+        #         rotated_block = pt.dot(chol_corr_block, z_block).T  # (J, n_multi)
+        #
+        #         for idx, c in enumerate(multi_item_cats_in_s):
+        #             category_offsets[c] = rotated_block[:, idx] * sigma_cat[c]
+        #
+        #         # Populate single-item categories in this section that were skipped
+        #         for c in cats_in_s:
+        #             if is_multi_item_mask[c] == 0.0:
+        #                 category_offsets[c] = z_cat_indep[c, :] * sigma_cat[c]
+        #     else:
+        #         for c in cats_in_s:
+        #             category_offsets[c] = z_cat_indep[c, :] * sigma_cat[c]
+        #
+        # # Convert offset tensor list into a unified symbolic matrix of shape (J, C_cat)
+        # category_offset_matrix = pt.stack(category_offsets, axis=1)
         sigma_cat_raw = pm.HalfNormal("sigma_cat_raw", sigma=config.SIGMA_CAT_PRIOR_SIGMA, shape=C_cat)
-
-        # Clamp 1-question category variances strictly to 0
         sigma_cat = pm.Deterministic("sigma_cat", sigma_cat_raw * is_multi_item_mask)
-        z_cat_indep = pm.StudentT("z_cat_indep", nu=config.STUDENT_T_NU, mu=0, sigma=1, shape=(C_cat, J))
 
-        for s_idx in range(S_sec):
-            cats_in_s = section_to_cats[s_idx]
-            multi_item_cats_in_s = [c for c in cats_in_s if is_multi_item_mask[c] == 1.0]
+        # Non-centered independent normal offsets (Normal is much more stable than Student-T here)
+        z_cat_indep = pm.Normal("z_cat_indep", mu=0, sigma=1, shape=(C_cat, J))
 
-            if len(multi_item_cats_in_s) > 1:
-                n_multi = len(multi_item_cats_in_s)
-                # Sample block Cholesky for offsets within this section
-                z_block = pm.StudentT(f"z_block_{s_idx}", nu=config.STUDENT_T_NU, mu=0, sigma=1, shape=(n_multi, J))
-
-                # Check for 2x2 blocks to bypass the PyTensor rewrite Scan bug
-                if n_multi == 2:
-                    # rho is the correlation coefficient between the two categories
-                    # Restricting to [-0.99, 0.99] ensures numerical stability in sqrt(1 - rho^2)
-                    rho = pm.Uniform(f"rho_block_{s_idx}", lower=-0.99, upper=0.99)
-
-                    # Manually construct 2x2 Cholesky correlation matrix
-                    row1 = pt.stack([1.0, 0.0])
-                    row2 = pt.stack([rho, pt.sqrt(1.0 - pt.square(rho))])
-                    chol_corr_block = pt.stack([row1, row2])
-                else:
-                    # Fallback general block-Cholesky with max padding to avoid PyTensor scan bug
-                    chol_cov_block_pad, corr_block_pad, std_block_pad = pm.LKJCholeskyCov(
-                        f"chol_cov_block_{s_idx}", n=max_n_multi, eta=config.LKJ_ETA, sd_dist=pm.HalfNormal.dist(0.5)
-                    )
-                    chol_cov_block = chol_cov_block_pad[:n_multi, :n_multi]
-                    std_block = std_block_pad[:n_multi]
-                    chol_corr_block = chol_cov_block / std_block[:, None]
-
-                rotated_block = pt.dot(chol_corr_block, z_block).T  # (J, n_multi)
-
-                for idx, c in enumerate(multi_item_cats_in_s):
-                    category_offsets[c] = rotated_block[:, idx] * sigma_cat[c]
-
-                # Populate single-item categories in this section that were skipped
-                for c in cats_in_s:
-                    if is_multi_item_mask[c] == 0.0:
-                        category_offsets[c] = z_cat_indep[c, :] * sigma_cat[c]
-            else:
-                for c in cats_in_s:
-                    category_offsets[c] = z_cat_indep[c, :] * sigma_cat[c]
-
-        # Convert offset tensor list into a unified symbolic matrix of shape (J, C_cat)
-        category_offset_matrix = pt.stack(category_offsets, axis=1)
+        # Vectorized category offsets: (J, C_cat)
+        category_offset_matrix = pm.Deterministic("category_offset_matrix", (z_cat_indep * sigma_cat[:, None]).T)
 
         # ----------------------------------------------------
         # VARIANCE-ANCHOR NORMALIZATION
@@ -191,8 +208,7 @@ def build_and_run_model(
             theta_cat_unnormalized / normalization_factor[None, :]
         )
 
-        # Verification exports
-        pm.Deterministic("Omega", corr_sec)
+        # Verification exports (kept for backwards compatibility with reporting code)
         pm.Deterministic("mu", pt.zeros((S_sec, 1)))
         pm.Deterministic("sigma", pt.ones(S_sec))
 

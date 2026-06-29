@@ -20,7 +20,7 @@ import model_pymc
 def main():
     total_start = time.time()
 
-    print("--- PART 2: LOADING TRACE FOR FIT DIAGNOSTICS ---")
+    print("--- PART 2, SECTION 1: LOADING TRACE FOR FIT DIAGNOSTICS ---")
     sec_start = time.time()
 
     df_long = pd.read_pickle(os.path.join(config.MODEL_DIR, "df_long.pkl"))
@@ -33,15 +33,16 @@ def main():
     idata.close()
     print(f"Elapsed time for SECTION 1: {time.time() - sec_start:.2f} seconds")
 
-    print("\n--- PART 2: COMPILING THINNED CPU POSTERIOR PREDICTIVE ---")
+    print("\n--- PART 2, SECTION 2: COMPILING THINNED CPU POSTERIOR PREDICTIVE ---")
     sec_start = time.time()
 
     _, dummy_model = model_pymc.build_and_run_model(df_long, struct_maps, run_sampling=False)
-    idata = diagnostics.generate_cpu_posterior_predictive(idata, dummy_model)
-    idata.to_netcdf(os.path.join(config.MODEL_DIR, "dora_inference_data.nc"))
+    idata_diagnostic = diagnostics.generate_cpu_posterior_predictive(idata, dummy_model)
+    # Save the diagnostic version to a separate file so it doesn't overwrite your 1,500-draw master trace!
+    idata_diagnostic.to_netcdf(os.path.join(config.MODEL_DIR, "dora_inference_data_diagnostic.nc"))
     print(f"Elapsed time for SECTION 2: {time.time() - sec_start:.2f} seconds")
 
-    print("\n--- PART 2: COMPUTING CONVERGENCE DIAGNOSTICS ---")
+    print("\n--- PART 2, SECTION 3: COMPUTING CONVERGENCE DIAGNOSTICS ---")
     sec_start = time.time()
     warnings, summary = diagnostics.run_diagnostic_checks(idata, df_long, struct_maps)
 
@@ -57,7 +58,7 @@ def main():
     print(f"  Warning logs saved to '{warning_path}'")
     print(f"Elapsed time for SECTION 3: {time.time() - sec_start:.2f} seconds")
 
-    print("\n--- PART 2: RENDERING STATISTICAL DIAGNOSTIC PLOTS ---")
+    print("\n--- PART 2, SECTION 4: RENDERING STATISTICAL DIAGNOSTIC PLOTS ---")
     sec_start = time.time()
     diagnostics.plot_ppc_safely(idata)
 
