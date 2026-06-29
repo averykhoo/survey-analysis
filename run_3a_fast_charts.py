@@ -6,12 +6,14 @@ Orchestration pipeline for Part 3a: Generate fast, low-resolution analytical plo
 (thinned down to 300 draws) inside the 'lowres_plots' subdirectory.
 """
 
-import time
 import os
 import pickle
+import time
+
 import arviz as az
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 import config
 import plotting
 
@@ -38,27 +40,38 @@ def main():
     categories_list = struct_maps["categories"]
     J = len(struct_maps["group_idx_map"])
 
-    export_df = pd.DataFrame()
-    export_df["group_idx"] = np.arange(J)
-    reverse_group_map = {v: k for k, v in struct_maps["group_idx_map"].items()}
-    export_df["group"] = export_df["group_idx"].map(reverse_group_map)
-    export_df[[config.ID_VAR, config.YEAR_COL]] = export_df["group"].str.split("|", expand=True)
-    export_df[config.YEAR_COL] = export_df[config.YEAR_COL].astype(int)
+    export_data = {}
 
-    team_to_dept_map = df_raw[[config.ID_VAR, "dept"]].drop_duplicates().set_index(config.ID_VAR)["dept"].to_dict()
-    export_df["dept"] = export_df[config.ID_VAR].map(team_to_dept_map)
+    group_idx = np.arange(J)
+    export_data["group_idx"] = group_idx
+    reverse_group_map = {v: k for k, v in struct_maps["group_idx_map"].items()}
+    group_series = pd.Series(group_idx).map(reverse_group_map)
+    export_data["group"] = group_series
+
+    split_groups = group_series.str.split("|", expand=True)
+    export_data[config.ID_VAR] = split_groups[0]
+    export_data[config.YEAR_COL] = split_groups[1].astype(int)
+
+    # Sort raw data by year first to ensure the latest (2026) department assignment is kept
+    df_raw_sorted = df_raw.sort_values(by=config.YEAR_COL)
+    team_to_dept_map = (df_raw_sorted
+                        .drop_duplicates(subset=[config.ID_VAR], keep="last")
+                        .set_index(config.ID_VAR)["dept"].to_dict())
+    export_data["dept"] = split_groups[0].map(team_to_dept_map)
 
     for s_idx, sec in enumerate(sections_list):
         print(f'{sec=}')
-        export_df[f"section_{sec}"] = posterior_means["theta_sec"].values[:, s_idx]
-        export_df[f"section_{sec}_hdi_lower"] = hdis["theta_sec"].values[:, s_idx, 0]
-        export_df[f"section_{sec}_hdi_upper"] = hdis["theta_sec"].values[:, s_idx, 1]
+        export_data[f"section_{sec}"] = posterior_means["theta_sec"].values[:, s_idx]
+        export_data[f"section_{sec}_hdi_lower"] = hdis["theta_sec"].values[:, s_idx, 0]
+        export_data[f"section_{sec}_hdi_upper"] = hdis["theta_sec"].values[:, s_idx, 1]
 
     for c_idx, cat in enumerate(categories_list):
-        print(f'{cat=}')
-        export_df[f"category_{cat}"] = posterior_means["theta_cat"].values[:, c_idx]
-        export_df[f"category_{cat}_hdi_lower"] = hdis["theta_cat"].values[:, c_idx, 0]
-        export_df[f"category_{cat}_hdi_upper"] = hdis["theta_cat"].values[:, c_idx, 1]
+        export_data[f"category_{cat}"] = posterior_means["theta_cat"].values[:, c_idx]
+        export_data[f"category_{cat}_hdi_lower"] = hdis["theta_cat"].values[:, c_idx, 0]
+        export_data[f"category_{cat}_hdi_upper"] = hdis["theta_cat"].values[:, c_idx, 1]
+
+    # Construct the contiguous, defragmented DataFrame in a single step
+    export_df = pd.DataFrame(export_data)
 
     # Dynamic Current-Year Department Selection
     sim_years = sorted(export_df[config.YEAR_COL].unique())

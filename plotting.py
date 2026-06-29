@@ -114,6 +114,9 @@ def plot_slope_chart_hierarchical(
       - Rainbow spectrum (Spectral) driven by value in their FINAL year of appearance.
       - Red maps to lowest score, Blue/Purple to highest score.
     """
+    output_dir = os.path.join(output_dir, str(target_dept) if target_dept else "all_depts")
+    os.makedirs(output_dir, exist_ok=True)
+
     df_plot = df_estimates.copy()
     if target_dept is not None:
         universe = get_dept_ancestor_universe(df_plot, target_dept, lineage_map)
@@ -248,6 +251,8 @@ def plot_omega_clustermap(corr_df: pd.DataFrame, output_dir: str) -> None:
     """
     Renders correlation matrices as hierarchical clustermaps.
     """
+    output_dir = os.path.join(output_dir, "diagnostics")
+    os.makedirs(output_dir, exist_ok=True)
     if corr_df is None or corr_df.empty:
         return
     n_cats = corr_df.shape[0]
@@ -278,6 +283,9 @@ def plot_likert_response_distributions(
     """
     Renders horizontal stacked response distributions sorted by team latent capabilities.
     """
+    output_dir = os.path.join(output_dir, str(target_dept) if target_dept else "all_depts")
+    os.makedirs(output_dir, exist_ok=True)
+
     df_overall = df_estimates[df_estimates[config.YEAR_COL] == target_year]
     df_responses = df_raw[df_raw[config.YEAR_COL] == target_year]
 
@@ -369,6 +377,9 @@ def plot_ridge_plots_hierarchical(
     """
     Generates posterior capabilities density ridge plots with thinned draws to accelerate KDE.
     """
+    output_dir = os.path.join(output_dir, str(target_dept) if target_dept else "all_depts")
+    os.makedirs(output_dir, exist_ok=True)
+
     df_plot = df_estimates.copy()
     if target_dept is not None:
         universe = get_dept_ancestor_universe(df_plot, target_dept, config.REORG_LINEAGE_MAP)
@@ -492,6 +503,9 @@ def plot_category_response_functions(
     """
     Vectorized rendering of Category Response Functions P(Y=c|theta).
     """
+    output_dir = os.path.join(output_dir, "diagnostics")
+    os.makedirs(output_dir, exist_ok=True)
+
     question_idx_map = struct_maps["question_idx_map"]
     if question_id not in question_idx_map:
         return
@@ -542,6 +556,9 @@ def plot_predicted_vs_empirical_dist(
     """
     Plots predictive check proportions against empirical frequencies with posterior HDIs.
     """
+    output_dir = os.path.join(output_dir, "diagnostics")
+    os.makedirs(output_dir, exist_ok=True)
+
     question_idx_map = struct_maps["question_idx_map"]
     if question_id not in question_idx_map:
         return
@@ -623,6 +640,9 @@ def plot_item_information_function(
     """
     Renders Item Information Function (IIF) curves incorporating shaded HDI bounds.
     """
+    output_dir = os.path.join(output_dir, "diagnostics")
+    os.makedirs(output_dir, exist_ok=True)
+
     question_idx_map = struct_maps["question_idx_map"]
     if question_id not in question_idx_map:
         return
@@ -672,6 +692,9 @@ def plot_test_information_function(
     """
     Renders Test Information Functions (TIF) and Standard Error of Measurement (SEM).
     """
+    output_dir = os.path.join(output_dir, "diagnostics")
+    os.makedirs(output_dir, exist_ok=True)
+
     a_samples = idata.posterior["a"].values.reshape(-1, K)
     cut_samples = idata.posterior["cutpoints"].values.reshape(-1, K, config.N_CATEGORIES_RESPONSE - 1)
 
