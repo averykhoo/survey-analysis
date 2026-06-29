@@ -29,7 +29,7 @@ for d in [MODEL_DIR, DIAGNOSTICS_DIR, CSV_DIR, PLOTS_DIR, LOWRES_PLOTS_DIR]:
 ITER_WARMUP: int = 2000  # Increased warmup steps as a structural crutch for sparse data
 ITER_SAMPLING: int = 1500
 CHAINS: int = 4  # 8 chains takes too much vram when running posterior checks
-TARGET_ACCEPT: float = 0.95  # High target accept to prevent divergent transitions
+TARGET_ACCEPT: float = 0.98   # High target accept to prevent divergent transitions
 
 # --- Regularization Hyperparameters ---
 # STUDENT_T_NU: float = 5.0  # Degrees of freedom for robust heavy-tailed team baselines
