@@ -47,7 +47,11 @@ def main():
     export_df[[config.ID_VAR, config.YEAR_COL]] = export_df["group"].str.split("|", expand=True)
     export_df[config.YEAR_COL] = export_df[config.YEAR_COL].astype(int)
 
-    team_to_dept_map = df_raw[[config.ID_VAR, "dept"]].drop_duplicates().set_index(config.ID_VAR)["dept"].to_dict()
+    # Sort raw data by year first to ensure the latest (2026) department assignment takes priority
+    df_raw_sorted = df_raw.sort_values(by=config.YEAR_COL)
+    team_to_dept_map = (df_raw_sorted
+                        .drop_duplicates(subset=[config.ID_VAR], keep="last")
+                        .set_index(config.ID_VAR)["dept"].to_dict())
     export_df["dept"] = export_df[config.ID_VAR].map(team_to_dept_map)
 
     for s_idx, sec in enumerate(sections_list):

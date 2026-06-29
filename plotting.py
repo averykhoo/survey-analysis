@@ -444,7 +444,7 @@ def plot_ridge_plots_hierarchical(
                     ax.plot(x_vals, y_vals, color=team_color, lw=2, zorder=3)
                 elif yr == 2025:
                     ax.plot(x_vals, y_vals, color=team_color, lw=2, zorder=3)
-                    ax.fill_between(x_vals, y_vals, color="none", edgecolor=team_color, hatch="////", lw=0, zorder=2)
+                    ax.fill_between(x_vals, y_vals, facecolor="none", edgecolor=team_color, hatch="////", zorder=2)
                 elif yr == 2026:
                     ax.fill_between(x_vals, y_vals, color=team_color, alpha=0.8, zorder=1)
 
