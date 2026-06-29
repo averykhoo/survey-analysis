@@ -22,6 +22,7 @@ import pandas as pd
 import scipy.special as sps
 import seaborn as sns
 from scipy.stats import gaussian_kde
+from coloraide.everything import ColorAll as Color
 
 import config
 import xarray
@@ -164,12 +165,20 @@ def plot_slope_chart_hierarchical(
 
     final_year_overall = available_years[-1]
 
-    # Map terminal scores to a Spectral Colormap (Lowest -> Red, Highest -> Blue)
+    # Map terminal scores to a custom OKHSL Colormap (Lowest -> Red, Highest -> Purple)
     scores = [m["final_score"] for m in team_meta.values()]
     if scores:
         vmin, vmax = min(scores), max(scores)
         norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-        cmap = plt.colormaps["Spectral"]
+        
+        # Generate custom OKHSL colormap
+        n_colors = 256
+        okhsl_colors = []
+        for h in np.linspace(25, 335, n_colors, endpoint=True):
+            c = Color("okhsl", [h, 1.0, 0.5])
+            okhsl_colors.append(c.convert("srgb").to_string(hex=True))
+        cmap = mcolors.ListedColormap(okhsl_colors)
+        
         team_colors = {team: cmap(norm(m["final_score"])) for team, m in team_meta.items()}
     else:
         team_colors = {}
@@ -214,7 +223,7 @@ def plot_slope_chart_hierarchical(
                         val_from = coords[y_from][parent_team]
                         style = base_style if p_idx == 0 else ":"
                         ax.plot([y_from, y_to], [val_from, val_to], linestyle=style, lw=2.5, color=line_color,
-                                alpha=0.75)
+                                alpha=1.0)
 
     if HAS_ADJUST_TEXT and texts:
         adjust_text(texts, ax=ax, force_points=(0.2, 0.3), iterations=30,
