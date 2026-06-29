@@ -25,6 +25,7 @@ from scipy.stats import gaussian_kde
 
 import config
 import xarray
+
 try:
     from adjustText import adjust_text
 
@@ -40,21 +41,21 @@ def filename_escape(text: str) -> str:
 
 def get_team_lineage_label(team_id: str, year: int, lineage_map: Dict[int, Dict[str, List[str]]]) -> str:
     """
-    Traces parentage backward from 2026, compiling inline descriptive labels.
+    Returns the team label cleanly without compiling lineage strings.
     """
-    if year == 2026:
-        parents = lineage_map.get(2026, {}).get(team_id, [])
-        if parents and parents != [team_id]:
-            parent_str = ", ".join(parents)
-            grandparents = []
-            for p in parents:
-                gps = lineage_map.get(2025, {}).get(p, [])
-                grandparents.extend(gps)
-            grandparents = sorted(list(set(grandparents)))
-            if grandparents and grandparents != parents and grandparents != [team_id]:
-                gp_str = ", ".join(grandparents)
-                return f"{team_id}\n(from 2025: {parent_str})\n(from 2023: {gp_str})"
-            return f"{team_id}\n(from 2025: {parent_str})"
+    # if year == 2026:
+    #     parents = lineage_map.get(2026, {}).get(team_id, [])
+    #     if parents and parents != [team_id]:
+    #         parent_str = ", ".join(parents)
+    #         grandparents = []
+    #         for p in parents:
+    #             gps = lineage_map.get(2025, {}).get(p, [])
+    #             grandparents.extend(gps)
+    #         grandparents = sorted(list(set(grandparents)))
+    #         if grandparents and grandparents != parents and grandparents != [team_id]:
+    #             gp_str = ", ".join(grandparents)
+    #             return f"{team_id}\n(from 2025: {parent_str})\n(from 2023: {gp_str})"
+    #         return f"{team_id}\n(from 2025: {parent_str})"
     return team_id
 
 
@@ -125,7 +126,8 @@ def plot_slope_chart_hierarchical(
     if len(available_years) < 2:
         return
 
-    fig, ax = plt.subplots(figsize=(13, 8))
+    num_plot_teams = len(df_plot[config.ID_VAR].unique())
+    fig, ax = plt.subplots(figsize=(13, max(8, num_plot_teams * 0.8)))
     texts = []
 
     coords = {y: {} for y in available_years}
@@ -138,6 +140,17 @@ def plot_slope_chart_hierarchical(
     all_teams = set()
     for y_dict in coords.values():
         all_teams.update(y_dict.keys())
+
+    connected_teams = set()
+    for idx in range(len(available_years) - 1, 0, -1):
+        y_to = available_years[idx]
+        y_from = available_years[idx - 1]
+        for child_team, parents in lineage_map.get(y_to, {}).items():
+            if child_team in coords[y_to]:
+                for p_team in parents:
+                    if p_team in coords[y_from]:
+                        connected_teams.add(child_team)
+                        connected_teams.add(p_team)
 
     team_meta = {}
     for team in all_teams:
@@ -169,18 +182,19 @@ def plot_slope_chart_hierarchical(
             align = "right" if yr == available_years[0] else "left"
 
             display_label = get_team_lineage_label(team, yr, lineage_map)
+            is_single = len(meta["active_years"]) == 1 and team not in connected_teams
 
-            if len(meta["active_years"]) == 1:
+            if is_single:
                 ax.plot(yr, val, "x", color="gray", markersize=7, mew=2)
                 texts.append(
-                    ax.text(yr + offset, val, f"{display_label} (1-Yr)", ha=align, va="center", fontsize=8, color="gray"))
+                    ax.text(yr + offset, val, f"{display_label} (1-Yr)", ha=align, va="center", fontsize=8,
+                            color="gray"))
             else:
-                if meta["final_yr"] == final_year_overall:
-                    ax.plot(yr, val, "o", color=team_colors.get(team, "gray"), markersize=6)
-                    texts.append(ax.text(yr + offset, val, display_label, ha=align, va="center", fontsize=8))
-                else:
-                    ax.plot(yr, val, "o", color="gray", markersize=6)
-                    texts.append(ax.text(yr + offset, val, display_label, ha=align, va="center", fontsize=8, color="gray"))
+                team_color = team_colors.get(team, "gray")
+                ax.plot(yr, val, "o", color=team_color, markersize=6)
+                label_color = "black" if meta["final_yr"] == final_year_overall else "gray"
+                texts.append(
+                    ax.text(yr + offset, val, display_label, ha=align, va="center", fontsize=8, color=label_color))
 
     # Plot Parent-Child Connection Lines
     for idx in range(len(available_years) - 1, 0, -1):
@@ -192,12 +206,8 @@ def plot_slope_chart_hierarchical(
             if child_team in coords[y_to]:
                 val_to = coords[y_to][child_team]
 
-                if team_meta[child_team]["final_yr"] == final_year_overall:
-                    line_color = team_colors.get(child_team, "gray")
-                    base_style = "-"
-                else:
-                    line_color = "gray"
-                    base_style = "--"
+                line_color = team_colors.get(child_team, "gray")
+                base_style = "-" if team_meta[child_team]["final_yr"] == final_year_overall else "--"
 
                 for p_idx, parent_team in enumerate(parents):
                     if parent_team in coords[y_from]:
@@ -207,7 +217,8 @@ def plot_slope_chart_hierarchical(
                                 alpha=0.75)
 
     if HAS_ADJUST_TEXT and texts:
-        adjust_text(texts, ax=ax, force_points=(0.2, 0.3), iterations=30, arrowprops=dict(arrowstyle="-", color="gray", lw=0.5))
+        adjust_text(texts, ax=ax, force_points=(0.2, 0.3), iterations=30,
+                    arrowprops=dict(arrowstyle="-", color="gray", lw=0.5))
 
     title_suffix = f" ({target_dept})" if target_dept else ""
     ax.set_title(f"Standardized {level.capitalize()} Evolution: {name}{title_suffix}", fontsize=13, weight="bold")
@@ -369,8 +380,25 @@ def plot_ridge_plots_hierarchical(
         return
     latest_year = unique_years[-1]
 
-    # Only create subplots for Terminal Teams (active in the latest year)
-    terminal_teams = sorted(df_plot[df_plot[config.YEAR_COL] == latest_year][config.ID_VAR].unique())
+    try:
+        df_raw = pd.read_pickle(os.path.join(config.MODEL_DIR, "df_raw.pkl"))
+        if level == "section":
+            cols = [q for cats in config.SURVEY_HIERARCHY.get(name, {}).values() for q in cats]
+        else:
+            cols = next((cats[name] for sec, cats in config.SURVEY_HIERARCHY.items() if name in cats), [])
+        valid_years = [yr for yr in unique_years if
+                       cols and df_raw[df_raw[config.YEAR_COL] == yr][cols].notna().sum().sum() > 0]
+        if not valid_years: valid_years = unique_years
+    except Exception:
+        valid_years = unique_years
+
+    latest_df = df_plot[df_plot[config.YEAR_COL] == latest_year].drop_duplicates(subset=[config.ID_VAR])
+    val_col = f"{level}_{name}"
+    if val_col in latest_df.columns:
+        terminal_teams = latest_df.sort_values(by=val_col, ascending=False)[config.ID_VAR].tolist()
+    else:
+        terminal_teams = sorted(latest_df[config.ID_VAR].tolist())
+
     num_teams = len(terminal_teams)
     if num_teams == 0:
         return
@@ -387,7 +415,6 @@ def plot_ridge_plots_hierarchical(
         team_color = colors(i % 10)
         ax.axhline(0, color="#1f4e78", linestyle=":", lw=1.5, zorder=0)
 
-        # 1. Trace the lineage backwards from this terminal team
         lineage = {latest_year: [terminal_team]}
         years_desc = sorted(unique_years, reverse=True)
         for j in range(len(years_desc) - 1):
@@ -398,10 +425,9 @@ def plot_ridge_plots_hierarchical(
                 lineage[y_prev].extend(config.REORG_LINEAGE_MAP.get(y_curr, {}).get(t, []))
             lineage[y_prev] = list(set(lineage[y_prev]))
 
-        max_y = 0  # Track max density height to scale y-axis for labels
+        max_y = 0
 
-        # 2. Plot all mapped ancestor teams onto this terminal team's axis
-        for yr in unique_years:
+        for yr in valid_years:
             for team in lineage.get(yr, []):
                 rows = df_plot[(df_plot[config.ID_VAR] == team) & (df_plot[config.YEAR_COL] == yr)]
                 if rows.empty:
@@ -422,14 +448,13 @@ def plot_ridge_plots_hierarchical(
                 elif yr == 2026:
                     ax.fill_between(x_vals, y_vals, color=team_color, alpha=0.8, zorder=1)
 
-                # Annotate historical team peaks if the name differs from the terminal name
                 if team != terminal_team:
                     peak_x = x_vals[np.argmax(y_vals)]
                     peak_y = np.max(y_vals)
                     ax.text(peak_x, peak_y * 1.05, f"{team} ({yr})",
                             ha="center", va="bottom", fontsize=9, color=team_color, weight="bold", alpha=0.75)
 
-        ax.set_ylim(bottom=0, top=max_y * 1.30 if max_y > 0 else 1)  # Pad top so text isn't cut off
+        ax.set_ylim(bottom=0, top=max_y * 1.30 if max_y > 0 else 1)
         ax.set_ylabel(terminal_team, rotation=0, ha="right", va="center", fontsize=11, weight="bold", labelpad=15)
         ax.yaxis.set_ticks([])
 

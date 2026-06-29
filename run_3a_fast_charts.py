@@ -49,11 +49,13 @@ def main():
     export_df["dept"] = export_df[config.ID_VAR].map(team_to_dept_map)
 
     for s_idx, sec in enumerate(sections_list):
+        print(f'{sec=}')
         export_df[f"section_{sec}"] = posterior_means["theta_sec"].values[:, s_idx]
         export_df[f"section_{sec}_hdi_lower"] = hdis["theta_sec"].values[:, s_idx, 0]
         export_df[f"section_{sec}_hdi_upper"] = hdis["theta_sec"].values[:, s_idx, 1]
 
     for c_idx, cat in enumerate(categories_list):
+        print(f'{cat=}')
         export_df[f"category_{cat}"] = posterior_means["theta_cat"].values[:, c_idx]
         export_df[f"category_{cat}_hdi_lower"] = hdis["theta_cat"].values[:, c_idx, 0]
         export_df[f"category_{cat}_hdi_upper"] = hdis["theta_cat"].values[:, c_idx, 1]
@@ -61,7 +63,7 @@ def main():
     # Dynamic Current-Year Department Selection
     sim_years = sorted(export_df[config.YEAR_COL].unique())
     latest_year = sim_years[-1]
-    depts = export_df[export_df[config.YEAR_COL] == latest_year]["dept"].dropna().unique().tolist() + [None]
+    depts = [None]  # +export_df[export_df[config.YEAR_COL] == latest_year]["dept"].dropna().unique().tolist()
 
     print(f"\n--- LOOPING OVER CURRENT ERA DEPARTMENTS: {depts} ---")
     for d in depts:
