@@ -113,9 +113,9 @@ def run_diagnostic_checks(
 
     try:
         az.plot_energy(idata)
-        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "energy_plot.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "energy_plot.svg"), bbox_inches="tight")
         plt.close()
-        print("  Saved energy diagnostic plot to diagnostics/energy_plot.png.")
+        print("  Saved energy diagnostic plot to diagnostics/energy_plot.svg.")
     except Exception as e:
         print(f"  [SKIPPED] Energy plot failed: {e}")
 
@@ -146,9 +146,9 @@ def run_diagnostic_checks(
                 # 3. Last-resort fallback: Plot standard pair plot without keyword arguments
                 az.plot_pair(minimal_idata)
 
-        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "pair_scale_indeterminacy_check.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "pair_scale_indeterminacy_check.svg"), bbox_inches="tight")
         plt.close()
-        print("  Saved scale-indeterminacy check plot to diagnostics/pair_scale_indeterminacy_check.png.")
+        print("  Saved scale-indeterminacy check plot to diagnostics/pair_scale_indeterminacy_check.svg.")
     except Exception as e:
         print(f"  [SKIPPED] Pair plot failed: {e}")
 
@@ -170,9 +170,9 @@ def run_diagnostic_checks(
             )
             # Save khat diagnostic graph
             az.plot_khat(loo_results, threshold=config.PARETO_K_THRESHOLD)
-            plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "looic_pareto_k_diagnostic.png"), bbox_inches="tight")
+            plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "looic_pareto_k_diagnostic.svg"), bbox_inches="tight")
             plt.close()
-            print("  Saved LOOIC Pareto k diagnostic plot to diagnostics/looic_pareto_k_diagnostic.png.")
+            print("  Saved LOOIC Pareto k diagnostic plot to diagnostics/looic_pareto_k_diagnostic.svg.")
     except Exception as e:
         print(f"  [SKIPPED] LOOIC calculations skipped: {e}")
 
@@ -233,8 +233,8 @@ def plot_ppc_safely(idata: xarray.DataTree) -> None:
                         "Neither legacy 'plot_ppc' nor modern 'plot_ppc_dist' could be located in your ArviZ environment."
                     )
 
-        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "ppc_plot.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "ppc_plot.svg"), bbox_inches="tight")
         plt.close()
-        print("  Saved posterior predictive check plot to diagnostics/ppc_plot.png.")
+        print("  Saved posterior predictive check plot to diagnostics/ppc_plot.svg.")
     except Exception as e:
         print(f"  [SKIPPED] PPC plot execution failed: {e}")

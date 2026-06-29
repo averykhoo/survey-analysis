@@ -70,9 +70,9 @@ def main():
         # 2. Compress the multidimensional 'a' trace onto a single row of axes
         az.plot_trace(idata, var_names=["a"])
 
-        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "trace_plots.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(config.DIAGNOSTICS_DIR, "trace_plots.svg"), bbox_inches="tight")
         plt.close()
-        print("  Saved trace plots to diagnostics/trace_plots.png.")
+        print("  Saved trace plots to diagnostics/trace_plots.svg.")
     except Exception as e:
         print(f"  [SKIPPED] Trace Graph failed: {e}")
 

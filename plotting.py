@@ -230,7 +230,7 @@ def plot_slope_chart_hierarchical(
     ax.set_xlim(available_years[0] - 0.4, available_years[-1] + 0.4)
 
     suffix = f"_{filename_escape(target_dept)}" if target_dept else ""
-    filename = f"{level}_{filename_escape(name)}{suffix}.png"
+    filename = f"{level}_{filename_escape(name)}{suffix}.svg"
     plt.savefig(os.path.join(output_dir, filename), bbox_inches="tight")
     plt.close()
 
@@ -250,7 +250,7 @@ def plot_omega_clustermap(corr_df: pd.DataFrame, output_dir: str) -> None:
             linewidths=.5, linecolor="lightgray", figsize=figsize
         )
         cluster_grid.figure.suptitle("Hierarchical Clustermap of Dimensions (Mean Omega)", y=1.02, weight="bold")
-        plt.savefig(os.path.join(output_dir, "omega_clustermap.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(output_dir, "omega_clustermap.svg"), bbox_inches="tight")
         plt.close()
         print("  Successfully plotted Omega hierarchical clustermap.")
     except Exception as e:
@@ -342,7 +342,7 @@ def plot_likert_response_distributions(
             start_pos += val
 
     suffix = f"_{filename_escape(target_dept)}" if target_dept else ""
-    filepath = os.path.join(output_dir, f"likert_{filename_escape(category)}{suffix}.png")
+    filepath = os.path.join(output_dir, f"likert_{filename_escape(category)}{suffix}.svg")
     plt.savefig(filepath, bbox_inches="tight")
     plt.close()
 
@@ -469,7 +469,7 @@ def plot_ridge_plots_hierarchical(
     plt.tight_layout()
 
     suffix = f"_{filename_escape(target_dept)}" if target_dept else ""
-    filename = f"ridge_{level}_{filename_escape(name)}{suffix}.png"
+    filename = f"ridge_{level}_{filename_escape(name)}{suffix}.svg"
     plt.savefig(os.path.join(output_dir, filename), bbox_inches="tight")
     plt.close()
 
@@ -518,7 +518,7 @@ def plot_category_response_functions(
     ax.set_title(f"Category Response Functions: {question_id}", weight="bold")
     ax.legend(loc="upper left")
     ax.grid(True, linestyle=":", alpha=0.6)
-    plt.savefig(os.path.join(output_dir, f"crf_{filename_escape(question_id)}.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, f"crf_{filename_escape(question_id)}.svg"), bbox_inches="tight")
     plt.close()
 
 
@@ -600,7 +600,7 @@ def plot_predicted_vs_empirical_dist(
     ax.legend()
     ax.grid(axis="y", linestyle=":", alpha=0.6)
 
-    plt.savefig(os.path.join(output_dir, f"item_fit_{filename_escape(question_id)}.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, f"item_fit_{filename_escape(question_id)}.svg"), bbox_inches="tight")
     plt.close()
 
 
@@ -650,7 +650,7 @@ def plot_item_information_function(
     ax.grid(True, linestyle=":", alpha=0.6)
     ax.legend()
 
-    plt.savefig(os.path.join(output_dir, f"iif_{filename_escape(question_id)}.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, f"iif_{filename_escape(question_id)}.svg"), bbox_inches="tight")
     plt.close()
 
 
@@ -713,5 +713,5 @@ def plot_test_information_function(
     ax2.legend(loc="upper right")
 
     plt.title("Test Information Function & Measurement Error bounds", fontsize=12, weight="bold")
-    plt.savefig(os.path.join(output_dir, "tif_sem_plot.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, "tif_sem_plot.svg"), bbox_inches="tight")
     plt.close()
